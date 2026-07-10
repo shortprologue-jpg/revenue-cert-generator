@@ -1,0 +1,26 @@
+# === 비밀/환경 파일 (절대 업로드 금지) ===
+.env
+.env.local
+*.key
+secrets.*
+
+# === OMC / Claude Code 작업 캐시 ===
+.omc/
+.claude/
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# === Streamlit ===
+.streamlit/secrets.toml
+
+# === OS / 에디터 ===
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
