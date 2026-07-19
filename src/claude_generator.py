@@ -10,6 +10,7 @@ from pathlib import Path
 
 # Claude Code 실행 파일 경로 (자동 감지 포함)
 _CANDIDATE_PATHS = [
+    r"C:\Users\xytyp\.local\bin\claude.exe",
     r"C:\Users\xytyp\AppData\Roaming\Claude\claude-code\2.1.156\claude.exe",
     r"C:\Users\xytyp\AppData\Roaming\Claude\claude-code\2.1.154\claude.exe",
 ]
@@ -100,7 +101,6 @@ def generate_certification_post(
             "--system-prompt-file", str(SYSTEM_PROMPT_FILE),
             "--input-format", "text",
             "--output-format", "text",
-            "--no-tools",
         ]
 
         proc = subprocess.Popen(

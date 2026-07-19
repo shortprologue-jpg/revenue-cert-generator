@@ -1,8 +1,7 @@
 import os
-import re
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,8 +21,10 @@ from src.file_saver import save_output
 from src.notion_fetcher import (
     NotionFetchError,
     PageNotFoundError,
-    compute_cutoff_date,
+    compute_read_window,
     fetch_member_page_content,
+    find_member_history_page_id,
+    list_active_members,
 )
 
 st.set_page_config(
@@ -35,16 +36,16 @@ st.set_page_config(
 st.title("🏋️ BPT 수익화 인증글 생성기")
 
 
-def parse_revenue_period(period_str: str) -> tuple[date, date]:
-    year = date.today().year
-    match = re.match(r"(\d{1,2})/(\d{1,2})\s*~\s*(\d{1,2})/(\d{1,2})", period_str.strip())
-    if not match:
-        raise ValueError(f"기간 형식 오류 (예: 4/13~5/24): '{period_str}'")
-    sm, sd, em, ed = map(int, match.groups())
-    start = date(year, sm, sd)
-    end_year = year if em >= sm else year + 1
-    end = date(end_year, em, ed)
-    return start, end
+@st.cache_data(ttl=600, show_spinner="회원 목록 불러오는 중...")
+def load_members(notion_api_key: str) -> list[dict]:
+    """마스터시트에서 현재 활동 회원 목록 로드. 10분 캐시."""
+    return list_active_members(notion_api_key)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def resolve_history_id(notion_api_key: str, row_id: str) -> str | None:
+    """회원 행 → 성장 히스토리 page_id (회원별 캐시)."""
+    return find_member_history_page_id(notion_api_key, row_id)
 
 
 # ── 사이드바 ──────────────────────────────────────────────────────────────────
@@ -52,50 +53,74 @@ def parse_revenue_period(period_str: str) -> tuple[date, date]:
 with st.sidebar:
     st.header("⚙️ 설정")
 
-    # ① Notion API 키
-    st.subheader("Notion API 키")
-    notion_key_input = st.text_input("NOTION_API_KEY", type="password", key="nk",
-                                      placeholder="secret_...")
-    notion_key = notion_key_input or os.getenv("NOTION_API_KEY", "")
-    if notion_key:
-        st.success("✅ Notion 키 설정됨")
-    else:
-        st.warning("⚠️ Notion 키 없음 — .env 파일에 추가하거나 위에 입력")
+    _env_key = os.getenv("NOTION_API_KEY", "")
+    _env_key = "" if _env_key == "여기에_키를_붙여넣으세요" else _env_key
 
-    st.divider()
-
-    # ② Claude Code 인증 상태
-    st.subheader("Claude Code 인증")
+    # Claude 인증: 세션 첫 로드 시 1회 자동 확인 (버튼 안 눌러도 상태 파악)
     if "claude_auth_ok" not in st.session_state:
-        st.session_state["claude_auth_ok"] = False
-
-    col_auth1, col_auth2 = st.columns([2, 1])
-    with col_auth2:
-        if st.button("확인", key="check_auth"):
-            with st.spinner("확인 중..."):
-                ok, msg = check_auth()
-                st.session_state["claude_auth_ok"] = ok
-                st.session_state["claude_auth_msg"] = msg
-
-    with col_auth1:
-        if st.session_state.get("claude_auth_ok"):
-            st.success("✅ 로그인됨")
-        elif "claude_auth_msg" in st.session_state:
-            st.error(f"❌ {st.session_state['claude_auth_msg']}")
-        else:
-            st.info("버튼으로 상태 확인")
-
-    if not st.session_state.get("claude_auth_ok"):
-        with st.expander("🔑 초기 로그인 방법"):
+        with st.spinner("Claude 로그인 상태 확인 중..."):
             try:
-                exe = _find_claude_exe()
-                st.code(f'& "{exe}" setup-token', language="powershell")
-            except FileNotFoundError:
-                st.code("claude setup-token", language="powershell")
-            st.caption("PowerShell에서 위 명령 실행 → 브라우저 인증 → 완료 후 '확인' 버튼")
+                _ok, _msg = check_auth()
+            except Exception as e:  # noqa: BLE001
+                _ok, _msg = False, str(e)
+        st.session_state["claude_auth_ok"] = _ok
+        st.session_state["claude_auth_msg"] = _msg
 
-    st.divider()
-    st.caption("노션 통합(integration)이 회원 페이지에 공유되어 있어야 합니다.")
+    claude_ok = bool(st.session_state.get("claude_auth_ok"))
+    both_ok = bool(_env_key) and claude_ok
+
+    # 둘 다 되면 접어둔다 (설정 완료 — 평소엔 안 보임)
+    if both_ok:
+        st.success("✅ 노션 · Claude 설정 완료")
+
+    with st.expander("🔧 노션 키 · Claude 인증", expanded=not both_ok):
+        st.caption("Notion API 키")
+        notion_key_input = st.text_input(
+            "NOTION_API_KEY", type="password", key="nk",
+            placeholder="ntn_... 붙여넣기 (Ctrl+V)", label_visibility="collapsed",
+        )
+        notion_key = notion_key_input or _env_key
+        if notion_key:
+            st.success("✅ Notion 키 설정됨")
+        else:
+            st.warning("⚠️ Notion 키 없음 — 위 칸에 붙여넣고 '💾 저장'")
+        if st.button("💾 이 키를 .env에 저장", use_container_width=True,
+                     disabled=not notion_key_input.strip()):
+            env_path = Path(__file__).parent / ".env"
+            env_path.write_text(
+                f"NOTION_API_KEY={notion_key_input.strip()}\n", encoding="utf-8"
+            )
+            st.success("✅ .env에 저장 완료! 다음부터 자동으로 불러옵니다.")
+
+        st.divider()
+
+        st.caption("Claude Code 인증")
+        col_auth1, col_auth2 = st.columns([2, 1])
+        with col_auth2:
+            if st.button("다시 확인", key="check_auth"):
+                with st.spinner("확인 중..."):
+                    ok, msg = check_auth()
+                    st.session_state["claude_auth_ok"] = ok
+                    st.session_state["claude_auth_msg"] = msg
+        with col_auth1:
+            if st.session_state.get("claude_auth_ok"):
+                st.success("✅ 로그인됨")
+            elif "claude_auth_msg" in st.session_state:
+                st.error(f"❌ {st.session_state['claude_auth_msg']}")
+            else:
+                st.info("상태 확인 필요")
+
+        if not st.session_state.get("claude_auth_ok"):
+            with st.expander("🔑 초기 로그인 방법"):
+                try:
+                    exe = _find_claude_exe()
+                    st.code(f'& "{exe}" setup-token', language="powershell")
+                except FileNotFoundError:
+                    st.code("claude setup-token", language="powershell")
+                st.caption("PowerShell에서 위 명령 실행 → 브라우저 인증 → 완료 후 '다시 확인'")
+
+    # notion_key를 메인에서 쓰도록 노출 (expander 밖에서도 유효)
+    notion_key = (st.session_state.get("nk") or "") or _env_key
 
 
 # ── 메인: 2단 레이아웃 ────────────────────────────────────────────────────────
@@ -105,30 +130,71 @@ col_input, col_output = st.columns([1, 1], gap="large")
 with col_input:
     st.subheader("입력")
 
-    member_name = st.text_input(
-        "회원 이름 (선택 — 이름만, 성 제외)",
-        placeholder="혁진",
-    )
-
-    period_str = st.text_input("수익화 기간 *", placeholder="4/13~5/24")
-    cutoff_date: date | None = None
-    if period_str.strip():
+    # ── 회원 선택 (노션에서 자동 수집, 이름 드롭다운) ──
+    members: list[dict] = []
+    members_error = ""
+    if notion_key:
         try:
-            _, period_end = parse_revenue_period(period_str)
-            cutoff_date = compute_cutoff_date(period_end)
-            st.caption(
-                f"컷오프 날짜: {cutoff_date.month}/{cutoff_date.day} "
-                f"(이 날짜 이전 노션 기록만 포함)"
-            )
-        except ValueError as e:
-            st.warning(str(e))
+            members = load_members(notion_key)
+        except Exception as e:  # noqa: BLE001
+            members_error = str(e)
+
+    col_sel, col_refresh = st.columns([5, 1])
+    with col_sel:
+        member_options = ["— 회원 선택 —"] + [m["name"] for m in members]
+        selected_member = st.selectbox(
+            "회원 선택 *",
+            options=member_options,
+            help="마스터시트의 현재 활동 회원(진행/졸업후 진행). 이름을 타이핑하면 검색됩니다.",
+        )
+    with col_refresh:
+        st.write("")
+        st.write("")
+        if st.button("🔄", help="회원 목록 새로고침"):
+            load_members.clear()
+            st.rerun()
+
+    name_to_row = {m["name"]: m["row_id"] for m in members}
+    name_to_week = {m["name"]: m.get("week") for m in members}
+    member_name = "" if selected_member.startswith("—") else selected_member
+    member_row_id = name_to_row.get(selected_member, "")
+
+    if members_error:
+        st.warning(f"⚠️ 회원 목록 로드 실패: {members_error}")
+    elif not notion_key:
+        st.caption("먼저 사이드바에서 Notion 키를 설정하세요.")
+    elif member_row_id:
+        st.caption(f"🏃 현재 {name_to_week.get(selected_member) or '—'} · 활동 회원 {len(members)}명")
+    else:
+        st.caption(
+            f"👥 활동 회원 {len(members)}명 · 이름 타이핑으로 검색. "
+            "신규/졸업은 마스터시트 '상태'로 자동 반영 → 안 보이면 🔄"
+        )
+
+    date_range = st.date_input(
+        "수익화 기간 * (시작일 · 종료일)",
+        value=(),
+        format="YYYY/MM/DD",
+        help="달력에서 시작일을 누르고 종료일을 누르면 범위가 선택됩니다.",
+    )
+    period_str = ""
+    read_window: tuple[date, date] | None = None
+    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+        period_start, period_end = date_range
+        period_str = (
+            f"{period_start.month}/{period_start.day}"
+            f"~{period_end.month}/{period_end.day}"
+        )
+        read_window = compute_read_window(period_start, period_end)
+        rs, re_ = read_window
+        st.caption(
+            f"노션 읽는 구간: {rs.month}/{rs.day} ~ {re_.month}/{re_.day} "
+            f"(기간보다 1주 뒤 — 피드백 지연 반영)"
+        )
+    elif isinstance(date_range, (tuple, list)) and len(date_range) == 1:
+        st.caption("종료일도 선택하세요.")
 
     revenue = st.text_input("매출 금액 *", placeholder="2,027,990원")
-
-    notion_url = st.text_input(
-        "회원 노션 페이지 URL *",
-        placeholder="https://www.notion.so/...",
-    )
 
     st.markdown("**카카오톡 내용** *")
     uploaded_file = st.file_uploader(
@@ -175,14 +241,12 @@ with col_output:
 
 if generate_btn:
     errors = []
-    if not period_str.strip():
-        errors.append("수익화 기간을 입력하세요.")
-    elif cutoff_date is None:
-        errors.append("수익화 기간 형식을 확인하세요 (예: 4/13~5/24).")
+    if read_window is None:
+        errors.append("수익화 기간(시작일·종료일)을 달력에서 선택하세요.")
     if not revenue.strip():
         errors.append("매출 금액을 입력하세요.")
-    if not notion_url.strip():
-        errors.append("노션 URL을 입력하세요.")
+    if not member_row_id:
+        errors.append("회원을 선택하세요.")
     if not kakao_text.strip():
         errors.append("카카오톡 내용을 입력하거나 파일을 업로드하세요.")
 
@@ -192,16 +256,33 @@ if generate_btn:
     else:
         notion_context = ""
         with status_placeholder.container():
-            with st.spinner("노션 페이지 불러오는 중..."):
+            with st.spinner("노션에서 해당 주차만 펼쳐 읽는 중... (10~40초)"):
                 try:
-                    notion_context = fetch_member_page_content(
-                        notion_key, notion_url, cutoff_date
-                    )
-                    line_count = len([l for l in notion_context.splitlines() if l.strip()])
-                    st.success(
-                        f"✅ 노션 {line_count}줄 로드 완료 "
-                        f"(컷오프: {cutoff_date.month}/{cutoff_date.day})"
-                    )
+                    rs, re_ = read_window
+                    hist_id = resolve_history_id(notion_key, member_row_id)
+                    if not hist_id:
+                        st.warning(
+                            "⚠️ 이 회원의 '성장 히스토리' 페이지를 찾지 못했습니다.\n\n"
+                            "카카오톡 내용만으로 진행합니다."
+                        )
+                    else:
+                        notion_context = fetch_member_page_content(
+                            notion_key, hist_id, rs, re_
+                        )
+                        if notion_context.strip():
+                            line_count = len(
+                                [l for l in notion_context.splitlines() if l.strip()]
+                            )
+                            st.success(
+                                f"✅ 노션 {line_count}줄 로드 완료 "
+                                f"(구간: {rs.month}/{rs.day}~{re_.month}/{re_.day})"
+                            )
+                        else:
+                            st.warning(
+                                f"⚠️ {rs.month}/{rs.day}~{re_.month}/{re_.day} 구간에 "
+                                "해당하는 주차 기록을 못 찾았습니다.\n\n"
+                                "카카오톡 내용만으로 진행합니다. (기간을 확인해 보세요)"
+                            )
                 except PageNotFoundError as e:
                     st.warning(f"⚠️ {e}\n\n카카오톡 내용만으로 진행합니다.")
                 except NotionFetchError as e:
