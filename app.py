@@ -11,6 +11,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
 import streamlit as st
+import streamlit.components.v1 as components  # 부모 DOM(달력) 조작용 JS 주입
 
 from src.claude_generator import (
     _find_claude_exe,
@@ -33,7 +34,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🏋️ BPT 수익화 인증글 생성기")
+st.title("🏋️ BPT 수익화 인증글 생성기", anchor=False)
 
 
 @st.cache_data(ttl=600, show_spinner="회원 목록 불러오는 중...")
@@ -48,10 +49,85 @@ def resolve_history_id(notion_api_key: str, row_id: str) -> str | None:
     return find_member_history_page_id(notion_api_key, row_id)
 
 
+def localize_datepicker() -> None:
+    """st.date_input 달력 보정 (baseweb 로케일 옵션이 없어 부모 DOM을 직접 손봄):
+    (A) 영어 월(June) → 한글 월(6월), (B) 'Choose a date range' 블록 숨김,
+    (C) 본문 스크롤 시 달력 정리. (product-classifier의 달력 처리 방식 참고)"""
+    components.html(
+        """
+<script>
+(function(){
+  var doc = window.parent.document;
+  var M = {January:'1월',February:'2월',March:'3월',April:'4월',May:'5월',June:'6월',
+           July:'7월',August:'8월',September:'9월',October:'10월',November:'11월',December:'12월'};
+  function fixIn(root){
+    if(!root) return;
+    var tw = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var hits=[], n;
+    while(n = tw.nextNode()){ if(M[(n.nodeValue||'').trim()]) hits.push(n); }
+    hits.forEach(function(node){
+      var k=(node.nodeValue||'').trim(); if(M[k]) node.nodeValue = node.nodeValue.replace(k, M[k]);
+    });
+  }
+  function hideQuickSelect(cal){
+    var pop = cal.closest('[data-baseweb="popover"]') || cal.parentElement; if(!pop) return;
+    var nodes = pop.querySelectorAll('div,label');
+    for(var i=0;i<nodes.length;i++){
+      var el = nodes[i];
+      if(el.contains(cal)) continue;
+      if(/Choose a date range/i.test(el.textContent||'')){
+        el.style.setProperty('display','none','important'); break;
+      }
+    }
+  }
+  function run(){
+    var cal = doc.querySelector('[data-baseweb="calendar"]');
+    doc.querySelectorAll('[data-baseweb="calendar"]').forEach(fixIn);
+    doc.querySelectorAll('[role="option"]').forEach(function(o){
+      if(M[(o.textContent||'').trim()]) fixIn(o);
+    });
+    if(cal) hideQuickSelect(cal);
+  }
+  var pending=false;
+  function schedule(){ if(pending) return; pending=true;
+    window.parent.setTimeout(function(){ pending=false; run(); }, 0);
+  }
+  if(window.parent.__bptDateLocaleObs) window.parent.__bptDateLocaleObs.disconnect();
+  var obs = new MutationObserver(schedule);
+  obs.observe(doc.body, {childList:true, subtree:true});
+  window.parent.__bptDateLocaleObs = obs;
+  run();
+
+  var CLOSE_PX = 36;
+  var baseTop = null;
+  function closeCal(){
+    var a = doc.activeElement;
+    doc.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,which:27,bubbles:true}));
+    try{ doc.body.dispatchEvent(new MouseEvent('mousedown',{bubbles:true})); }catch(e){}
+    if(a && a.blur) a.blur();
+  }
+  var main = doc.querySelector('[data-testid="stMain"]');
+  function onCalScroll(){
+    if(!doc.querySelector('[data-baseweb="calendar"]')){ baseTop = null; return; }
+    if(baseTop === null) baseTop = main.scrollTop;
+    if(Math.abs(main.scrollTop - baseTop) >= CLOSE_PX){ baseTop = null; closeCal(); return; }
+    try{ window.parent.dispatchEvent(new Event('scroll')); }catch(e){}
+  }
+  if(main && !main.__bptCalScroll){
+    main.addEventListener('scroll', onCalScroll, {passive:true});
+    main.__bptCalScroll = true;
+  }
+})();
+</script>
+""",
+        height=0,
+    )
+
+
 # ── 사이드바 ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("⚙️ 설정")
+    st.header("⚙️ 설정", anchor=False)
 
     _env_key = os.getenv("NOTION_API_KEY", "")
     _env_key = "" if _env_key == "여기에_키를_붙여넣으세요" else _env_key
@@ -125,10 +201,10 @@ with st.sidebar:
 
 # ── 메인: 2단 레이아웃 ────────────────────────────────────────────────────────
 
-col_input, col_output = st.columns([1, 1], gap="large")
+col_input, col_output = st.columns([1, 1], gap="large", border=True)
 
 with col_input:
-    st.subheader("입력")
+    st.subheader("입력", anchor=False)
 
     # ── 회원 선택 (노션에서 자동 수집, 이름 드롭다운) ──
     members: list[dict] = []
@@ -145,7 +221,6 @@ with col_input:
         selected_member = st.selectbox(
             "회원 선택 *",
             options=member_options,
-            help="마스터시트의 현재 활동 회원(진행/졸업후 진행). 이름을 타이핑하면 검색됩니다.",
         )
     with col_refresh:
         st.write("")
@@ -164,19 +239,14 @@ with col_input:
     elif not notion_key:
         st.caption("먼저 사이드바에서 Notion 키를 설정하세요.")
     elif member_row_id:
-        st.caption(f"🏃 현재 {name_to_week.get(selected_member) or '—'} · 활동 회원 {len(members)}명")
-    else:
-        st.caption(
-            f"👥 활동 회원 {len(members)}명 · 이름 타이핑으로 검색. "
-            "신규/졸업은 마스터시트 '상태'로 자동 반영 → 안 보이면 🔄"
-        )
+        st.caption(f"🏃 현재 {name_to_week.get(selected_member) or '—'}")
 
     date_range = st.date_input(
-        "수익화 기간 * (시작일 · 종료일)",
+        "수익화 기간 *",
         value=(),
         format="YYYY/MM/DD",
-        help="달력에서 시작일을 누르고 종료일을 누르면 범위가 선택됩니다.",
     )
+    localize_datepicker()
     period_str = ""
     read_window: tuple[date, date] | None = None
     if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
@@ -232,9 +302,22 @@ with col_input:
 
 
 with col_output:
-    st.subheader("생성된 인증글")
+    st.subheader("생성된 인증글", anchor=False)
     output_placeholder = st.empty()
     status_placeholder = st.empty()
+
+    # 아직 생성 전이면 허전하지 않게 안내 카드를 보여준다.
+    if "generated_text" not in st.session_state:
+        with output_placeholder.container(border=True):
+            st.markdown(
+                "<div style='text-align:center; padding:64px 16px; color:#8a8f98;'>"
+                "<div style='font-size:46px; line-height:1;'>✨</div>"
+                "<div style='margin-top:14px; font-size:15px; line-height:1.6;'>"
+                "왼쪽에서 정보를 입력하고<br><b>‘인증글 생성’</b>을 누르면<br>"
+                "여기에 결과가 표시됩니다."
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
 
 
 # ── 생성 실행 ─────────────────────────────────────────────────────────────────
@@ -332,9 +415,11 @@ if "generated_text" in st.session_state:
     meta = st.session_state.get("meta", {})
 
     with col_output:
-        st.divider()
-        st.caption("복사용 텍스트 (우측 상단 아이콘으로 복사)")
-        st.code(generated, language=None)
+        tab_view, tab_raw = st.tabs(["📖 미리보기", "📋 복사용 원문"])
+        with tab_view:
+            st.markdown(generated)
+        with tab_raw:
+            st.code(generated, language=None)
 
         btn_col1, btn_col2 = st.columns(2)
         today_str = date.today().strftime("%Y%m%d")
