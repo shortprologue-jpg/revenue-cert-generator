@@ -6,18 +6,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True: 앱 실행 중 .env를 고쳐도 새로고침하면 반영되게.
+load_dotenv(override=True)
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 import streamlit as st
 import streamlit.components.v1 as components  # 부모 DOM(달력) 조작용 JS 주입
 
-from src.claude_generator import (
-    _find_claude_exe,
-    check_auth,
-    generate_certification_post,
-)
+from src.gemini_generator import generate_certification_post
 from src.file_saver import save_output
 from src.notion_fetcher import (
     NotionFetchError,
@@ -124,79 +121,80 @@ def localize_datepicker() -> None:
     )
 
 
+def save_env_var(name: str, value: str) -> None:
+    """`.env`에서 name 키만 갱신(없으면 추가). 다른 키는 보존한다."""
+    env_path = Path(__file__).parent / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    out, found = [], False
+    for ln in lines:
+        if ln.strip().startswith(f"{name}="):
+            out.append(f"{name}={value}")
+            found = True
+        else:
+            out.append(ln)
+    if not found:
+        out.append(f"{name}={value}")
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    os.environ[name] = value
+
+
 # ── 사이드바 ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.header("⚙️ 설정", anchor=False)
 
-    _env_key = os.getenv("NOTION_API_KEY", "")
-    _env_key = "" if _env_key == "여기에_키를_붙여넣으세요" else _env_key
+    _PLACEHOLDERS = ("여기에_키를_붙여넣으세요", "여기에_제미나이_키_붙여넣기")
 
-    # Claude 인증: 세션 첫 로드 시 1회 자동 확인 (버튼 안 눌러도 상태 파악)
-    if "claude_auth_ok" not in st.session_state:
-        with st.spinner("Claude 로그인 상태 확인 중..."):
-            try:
-                _ok, _msg = check_auth()
-            except Exception as e:  # noqa: BLE001
-                _ok, _msg = False, str(e)
-        st.session_state["claude_auth_ok"] = _ok
-        st.session_state["claude_auth_msg"] = _msg
+    def _env_val(name: str) -> str:
+        v = os.getenv(name, "")
+        return "" if v in _PLACEHOLDERS else v
 
-    claude_ok = bool(st.session_state.get("claude_auth_ok"))
-    both_ok = bool(_env_key) and claude_ok
+    notion_env = _env_val("NOTION_API_KEY")
+    gemini_env = _env_val("GEMINI_API_KEY") or _env_val("GOOGLE_API_KEY")
 
-    # 둘 다 되면 접어둔다 (설정 완료 — 평소엔 안 보임)
+    # 필드 입력 시 즉시 사용 가능하게 os.environ에도 반영 (생성기가 여기서 읽음).
+    _gk_typed = (st.session_state.get("gk") or "").strip()
+    if _gk_typed:
+        os.environ["GEMINI_API_KEY"] = _gk_typed
+
+    notion_key = (st.session_state.get("nk") or "") or notion_env
+    gemini_ok = bool(_gk_typed or gemini_env)
+    both_ok = bool(notion_key) and gemini_ok
+
     if both_ok:
-        st.success("✅ 노션 · Claude 설정 완료")
+        st.success("✅ 노션 · Gemini 설정 완료")
 
-    with st.expander("🔧 노션 키 · Claude 인증", expanded=not both_ok):
+    with st.expander("🔧 노션 키 · Gemini 키", expanded=not both_ok):
         st.caption("Notion API 키")
         notion_key_input = st.text_input(
             "NOTION_API_KEY", type="password", key="nk",
-            placeholder="ntn_... 붙여넣기 (Ctrl+V)", label_visibility="collapsed",
+            placeholder="ntn_...", label_visibility="collapsed",
         )
-        notion_key = notion_key_input or _env_key
-        if notion_key:
+        if notion_key_input or notion_env:
             st.success("✅ Notion 키 설정됨")
         else:
-            st.warning("⚠️ Notion 키 없음 — 위 칸에 붙여넣고 '💾 저장'")
-        if st.button("💾 이 키를 .env에 저장", use_container_width=True,
+            st.warning("⚠️ Notion 키 없음")
+        if st.button("💾 Notion 키 저장", use_container_width=True,
                      disabled=not notion_key_input.strip()):
-            env_path = Path(__file__).parent / ".env"
-            env_path.write_text(
-                f"NOTION_API_KEY={notion_key_input.strip()}\n", encoding="utf-8"
-            )
-            st.success("✅ .env에 저장 완료! 다음부터 자동으로 불러옵니다.")
+            save_env_var("NOTION_API_KEY", notion_key_input.strip())
+            st.success("✅ 저장 완료!")
 
         st.divider()
 
-        st.caption("Claude Code 인증")
-        col_auth1, col_auth2 = st.columns([2, 1])
-        with col_auth2:
-            if st.button("다시 확인", key="check_auth"):
-                with st.spinner("확인 중..."):
-                    ok, msg = check_auth()
-                    st.session_state["claude_auth_ok"] = ok
-                    st.session_state["claude_auth_msg"] = msg
-        with col_auth1:
-            if st.session_state.get("claude_auth_ok"):
-                st.success("✅ 로그인됨")
-            elif "claude_auth_msg" in st.session_state:
-                st.error(f"❌ {st.session_state['claude_auth_msg']}")
-            else:
-                st.info("상태 확인 필요")
-
-        if not st.session_state.get("claude_auth_ok"):
-            with st.expander("🔑 초기 로그인 방법"):
-                try:
-                    exe = _find_claude_exe()
-                    st.code(f'& "{exe}" setup-token', language="powershell")
-                except FileNotFoundError:
-                    st.code("claude setup-token", language="powershell")
-                st.caption("PowerShell에서 위 명령 실행 → 브라우저 인증 → 완료 후 '다시 확인'")
-
-    # notion_key를 메인에서 쓰도록 노출 (expander 밖에서도 유효)
-    notion_key = (st.session_state.get("nk") or "") or _env_key
+        st.caption("Gemini API 키 (무료 — aistudio.google.com/apikey)")
+        gemini_key_input = st.text_input(
+            "GEMINI_API_KEY", type="password", key="gk",
+            placeholder="AIza...", label_visibility="collapsed",
+        )
+        if gemini_key_input or gemini_env:
+            st.success("✅ Gemini 키 설정됨")
+        else:
+            st.warning("⚠️ Gemini 키 없음 — 위 칸에 붙여넣고 저장")
+        if st.button("💾 Gemini 키 저장", use_container_width=True,
+                     disabled=not gemini_key_input.strip()):
+            save_env_var("GEMINI_API_KEY", gemini_key_input.strip())
+            os.environ["GEMINI_API_KEY"] = gemini_key_input.strip()
+            st.success("✅ 저장 완료!")
 
 
 # ── 메인: 2단 레이아웃 ────────────────────────────────────────────────────────
@@ -288,7 +286,7 @@ with col_input:
     if kakao_input:
         kakao_text = kakao_input
 
-    can_generate = bool(notion_key and st.session_state.get("claude_auth_ok"))
+    can_generate = bool(notion_key and gemini_ok)
     generate_btn = st.button(
         "인증글 생성",
         type="primary",
@@ -297,8 +295,8 @@ with col_input:
     )
     if not notion_key:
         st.caption("⚠️ 사이드바에서 Notion 키를 설정하세요.")
-    elif not st.session_state.get("claude_auth_ok"):
-        st.caption("⚠️ 사이드바에서 Claude Code 인증을 확인하세요.")
+    elif not gemini_ok:
+        st.caption("⚠️ 사이드바에서 Gemini 키를 설정하세요.")
 
 
 with col_output:
@@ -338,8 +336,9 @@ if generate_btn:
             st.warning(err)
     else:
         notion_context = ""
+        notion_images: list[str] = []
         with status_placeholder.container():
-            with st.spinner("노션에서 해당 주차만 펼쳐 읽는 중... (10~40초)"):
+            with st.spinner("노션에서 해당 주차만 펼쳐 읽는 중 (이미지 포함)... (20~60초)"):
                 try:
                     rs, re_ = read_window
                     hist_id = resolve_history_id(notion_key, member_row_id)
@@ -349,15 +348,19 @@ if generate_btn:
                             "카카오톡 내용만으로 진행합니다."
                         )
                     else:
-                        notion_context = fetch_member_page_content(
+                        notion_context, notion_images = fetch_member_page_content(
                             notion_key, hist_id, rs, re_
                         )
                         if notion_context.strip():
                             line_count = len(
                                 [l for l in notion_context.splitlines() if l.strip()]
                             )
+                            img_note = (
+                                f" · 이미지 {len(notion_images)}장 포함"
+                                if notion_images else ""
+                            )
                             st.success(
-                                f"✅ 노션 {line_count}줄 로드 완료 "
+                                f"✅ 노션 {line_count}줄 로드 완료{img_note} "
                                 f"(구간: {rs.month}/{rs.day}~{re_.month}/{re_.day})"
                             )
                         else:
@@ -386,6 +389,7 @@ if generate_btn:
                         revenue=revenue.strip(),
                         kakao_content=kakao_text.strip(),
                         notion_context=notion_context,
+                        notion_images=notion_images,
                     ):
                         full_text += chunk
                         stream_area.markdown(full_text + "▌")
@@ -394,7 +398,6 @@ if generate_btn:
 
             except PermissionError as e:
                 st.error(f"🔐 {e}")
-                st.session_state["claude_auth_ok"] = False
                 st.stop()
             except Exception as e:
                 st.error(f"❌ 생성 오류: {e}")
@@ -407,19 +410,25 @@ if generate_btn:
                     "period": period_str.strip(),
                     "revenue": revenue.strip(),
                 }
+                st.session_state["edit_area"] = full_text
+
+        # 스트리밍으로 그린 잔상을 지워, 아래 '수정 가능' 편집칸 하나만 남긴다.
+        output_placeholder.empty()
 
 # ── 출력 / 저장 ───────────────────────────────────────────────────────────────
 
 if "generated_text" in st.session_state:
-    generated = st.session_state["generated_text"]
     meta = st.session_state.get("meta", {})
+    if "edit_area" not in st.session_state:
+        st.session_state["edit_area"] = st.session_state["generated_text"]
 
     with col_output:
-        tab_view, tab_raw = st.tabs(["📖 미리보기", "📋 복사용 원문"])
-        with tab_view:
-            st.markdown(generated)
-        with tab_raw:
-            st.code(generated, language=None)
+        # 하나의 편집 가능한 영역. 여기서 바로 고치면 다운로드·저장에 그대로 반영됨.
+        edited = st.text_area(
+            "생성된 인증글 — 여기서 바로 수정할 수 있어요",
+            height=460,
+            key="edit_area",
+        )
 
         btn_col1, btn_col2 = st.columns(2)
         today_str = date.today().strftime("%Y%m%d")
@@ -436,7 +445,7 @@ if "generated_text" in st.session_state:
         with btn_col1:
             st.download_button(
                 label="💾 다운로드",
-                data=(header + generated).encode("utf-8"),
+                data=(header + edited).encode("utf-8"),
                 file_name=file_name,
                 mime="text/plain",
                 use_container_width=True,
@@ -445,9 +454,9 @@ if "generated_text" in st.session_state:
         with btn_col2:
             if st.button("📁 서버 저장", use_container_width=True):
                 saved = save_output(
-                    generated,
+                    edited,
                     meta.get("member_name", ""),
                     meta.get("period", ""),
                     meta.get("revenue", ""),
                 )
-                st.success(f"저장: {saved.name}")
+                st.success(f"저장 완료: outputs/{saved.name}")

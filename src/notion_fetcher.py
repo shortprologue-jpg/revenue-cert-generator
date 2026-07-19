@@ -52,6 +52,8 @@ GRACE_DAYS = 3
 # 안전 상한 (선택된 주차만 읽으므로 넉넉하게).
 MAX_BLOCKS = 3000
 MAX_DEPTH = 5
+# 제미나이에 함께 보낼 이미지(콘관시·콘텐츠 피드백 캡처) 최대 장수 — 속도·비용 상한.
+MAX_IMAGES = 12
 
 
 def extract_page_id(url: str) -> str:
@@ -252,6 +254,17 @@ def block_line(block: dict) -> str:
     return text
 
 
+def _image_url(block: dict) -> str | None:
+    """이미지 블록에서 URL 추출 (업로드=file, 외부=external)."""
+    img = block.get("image", {})
+    t = img.get("type")
+    if t == "file":
+        return img.get("file", {}).get("url")
+    if t == "external":
+        return img.get("external", {}).get("url")
+    return None
+
+
 def parse_yymmdd(text: str) -> date | None:
     match = YYMMDD_RE.search(text)
     if not match:
@@ -315,33 +328,45 @@ def _collect_text(
     depth: int,
     counter: dict,
     lines: list[str],
+    images: list[str],
     indent: int = 0,
 ) -> None:
-    """블록들을 재귀로 펼쳐(토글 등) 들여쓰기 텍스트로 모은다. 상한 도달 시 중단."""
+    """블록들을 재귀로 펼쳐(토글 등) 텍스트로 모으고, 이미지 URL도 수집한다.
+
+    콘관시·콘텐츠 피드백의 표/지표는 '이미지 캡처'로 들어있는 경우가 많아,
+    텍스트만으로는 숫자가 누락된다. 이미지 URL을 따로 모아 제미나이(멀티모달)에 넘긴다.
+    """
     for block in blocks:
         if counter["n"] >= MAX_BLOCKS:
             lines.append("…(이하 생략: 블록 상한 도달)")
             return
         counter["n"] += 1
-        text = block_line(block)
-        if text:
-            lines.append("  " * indent + text)
+        if block.get("type") == "image":
+            url = _image_url(block)
+            if url and len(images) < MAX_IMAGES:
+                images.append(url)
+                lines.append("  " * indent + "[이미지 자료 — 첨부 이미지에서 수치를 읽으세요]")
+        else:
+            text = block_line(block)
+            if text:
+                lines.append("  " * indent + text)
         if block.get("has_children") and depth < MAX_DEPTH:
             kids = fetch_all_blocks(client, block["id"])
-            _collect_text(client, kids, depth + 1, counter, lines, indent + 1)
+            _collect_text(client, kids, depth + 1, counter, lines, images, indent + 1)
 
 
-def render_sections(client: Client, selected: list[dict]) -> str:
-    """선택된 주차들을 토글까지 펼쳐 하나의 텍스트로."""
+def render_sections(client: Client, selected: list[dict]) -> tuple[str, list[str]]:
+    """선택된 주차들을 토글까지 펼쳐 (텍스트, 이미지URL 목록)으로."""
     counter = {"n": 0}
     out: list[str] = []
+    images: list[str] = []
     for section in selected:
         out.append(f"### {section['title']}")
         lines: list[str] = []
-        _collect_text(client, section["body"], 0, counter, lines, 0)
+        _collect_text(client, section["body"], 0, counter, lines, images, 0)
         out.append("\n".join(lines))
         out.append("")
-    return "\n".join(out).strip()
+    return "\n".join(out).strip(), images
 
 
 def fetch_member_page_content(
@@ -349,10 +374,11 @@ def fetch_member_page_content(
     page_url: str,
     read_start: date,
     read_end: date,
-) -> str:
-    """회원 페이지에서 읽기 창에 드는 주차의 내용을 토글까지 펼쳐 반환.
+) -> tuple[str, list[str]]:
+    """회원 페이지에서 읽기 창에 드는 주차의 내용을 토글까지 펼쳐 (텍스트, 이미지URL)로 반환.
 
-    창에 드는 주차가 없으면 빈 문자열(호출부가 '노션 없음'으로 처리).
+    창에 드는 주차가 없으면 ("", []) (호출부가 '노션 없음'으로 처리).
+    이미지 URL은 콘관시·콘텐츠 피드백 캡처 등으로, 제미나이에 함께 넘겨 수치를 읽게 한다.
     """
     client = Client(auth=notion_api_key)
     page_id = extract_page_id(page_url)
@@ -371,5 +397,5 @@ def fetch_member_page_content(
     sections = split_week_sections(top)
     selected = select_sections(sections, read_start, read_end)
     if not selected:
-        return ""
+        return "", []
     return render_sections(client, selected)

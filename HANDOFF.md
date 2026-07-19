@@ -3,20 +3,20 @@
 > 여러 컴퓨터를 오갈 때 이 파일을 읽고 이어서 작업한다.
 > **앉으면 pull, 뜨면 push.** (`worksync start` / `worksync end`)
 
-## 현재 상태 (2026-07-19 기준)
+## 현재 상태 (2026-07-20 기준)
 
-앱 **정상 작동 + E2E 검증 완료.** 지난 세션(7/17)에 진단만 해뒀던 노션 읽기 결함 3건을
-이번 세션에 **전부 수정**했다. 실제 회원(권혁진)으로 노션→생성까지 돌려 인증글이
-노션 토글 속 내용을 실제 반영하는 것까지 확인함.
+앱 **정상 작동 + E2E 검증 완료.** 큰 변화: **생성 엔진을 Claude Code CLI → Gemini(google-genai)로 교체**하고,
+**노션 이미지(콘관시 지표 표)까지 읽는 멀티모달**을 붙였다. 실제 회원(이도하)으로 노션→이미지→생성까지
+돌려 콘관시 표의 funnel 숫자(유료 고객 전환율·객단가·주차별 클릭률 등)가 인증글에 반영되는 것 확인.
 
 ### 실행 방법 (이 노트북)
-- 앱 실행: `앱실행.bat` (또는 `streamlit run app.py --server.port 8502`).
-  - ⚠️ 이 노트북은 기본 `python`이 hermes venv라 streamlit이 없다. 직접 띄울 땐
-    `C:\Users\xytyp\AppData\Local\Programs\Python\Python312\Scripts\streamlit.exe` 사용.
-    (`앱실행.bat`의 `python -m streamlit`이 이 노트북에선 실패할 수 있음 — 확인 필요.)
-- 의존성: `notion-client`(3.x), `streamlit`, `python-dotenv` — Python312에 설치 완료.
-- `.env`: `NOTION_API_KEY` 설정됨(커밋 안 됨, 노트북마다 필요). 앱 사이드바 저장 버튼으로도 생성 가능.
-- Claude Code 로그인 됨(`C:\Users\xytyp\.local\bin\claude.exe`, PATH 자동 탐색).
+- 앱 실행: 직접 `C:\Users\xytyp\AppData\Local\Programs\Python\Python312\Scripts\streamlit.exe run app.py --server.port 8502`.
+  - ⚠️ 기본 `python`이 hermes venv라 streamlit 없음. `앱실행.bat`의 `python -m streamlit`은 이 노트북에서 실패 가능(다음 할 일).
+- 의존성: `streamlit`, `notion-client`(3.x), `python-dotenv`, **`google-genai`** — Python312에 설치 완료.
+- `.env` (커밋 안 됨, 노트북마다 필요):
+  - `NOTION_API_KEY` (ntn_…)
+  - `GEMINI_API_KEY` (AIza…, **유료 키** — 무료 티어는 보낸 데이터를 학습에 쓸 수 있어 유료 사용). AI Studio에서 발급.
+  - 앱 사이드바에서 각 키 저장 버튼으로도 `.env`에 기록 가능(다른 키 안 덮어씀).
 
 ## 이번 세션에 한 일 (핵심)
 
@@ -34,7 +34,22 @@
      JS(`components.html`)로 영어 월→한글 월(6월), 'Choose a date range' quickSelect 숨김, 스크롤 시 정리.
      (product-classifier의 `_localize_datepicker_js` **달력 부분만** 참고, 다른 코드 미반입.)
    - 입력/결과를 카드(`st.columns(border=True)`)로, 결과 전 오른쪽에 **빈 상태 안내 카드**.
-   - 결과를 **탭**(미리보기/복사용 원문)으로. 헤더 앵커(🔗) 제거(`anchor=False`). 테마 파일 신규(오렌지·둥근 모서리).
+   - 결과를 **편집 가능한 text_area**로(위/아래 중복 제거). 헤더 앵커(🔗) 제거(`anchor=False`). 테마 파일 신규(오렌지·둥근 모서리).
+8. **생성 엔진 교체: Claude CLI → Gemini** (`src/gemini_generator.py` 신규):
+   - 이유: Claude CLI는 호출마다 콜드스타트+MCP 6개 연결로 **~36초 오버헤드**(측정) → 생성 158초.
+     Gemini API 직통은 오버헤드 없어 **텍스트 생성 ~15초**. 모델 = **`gemini-3.5-flash`**
+     (2.5-pro는 신규 사용자 차단됨, 2.5-flash는 지시 준수·문체가 약함 → 3.5-flash가 클로드 느낌에 가장 근접).
+   - `build_user_message`·`system_prompt.md`는 `claude_generator`에서 재사용(모델 무관). 사이드바는 Claude 인증 대신 Gemini 키 상태로.
+9. **멀티모달 — 노션 이미지(콘관시 표) 읽기** ⭐:
+   - **funnel 숫자(매출·객단가·유료 고객 수·전환율·랜딩 접속·주차별 클릭률)는 노션 텍스트가 아니라 "이미지 캡처"에 있음.**
+     콘관시 표(주차별 지표)가 유튜브 스튜디오 분석 캡처들과 함께 이미지로 붙어 있음.
+   - `notion_fetcher`가 선택 주차의 **이미지 URL도 수집**(MAX_IMAGES=12) → `gemini_generator`가 httpx로 받아
+     `types.Part.from_bytes`로 텍스트와 함께 전송 → Gemini가 표에서 숫자를 읽음. 프롬프트에 "이 표는 실제 데이터, 읽어 써라" 명시.
+   - 생성 시간: 이미지 포함 시 ~44초(+노션 읽기 ~20초) = **~64초**. (여전히 Claude 158초보다 빠름)
+10. **프롬프트 대개편** (`prompts/system_prompt.md`) — 공식 양식(사용자 제공)을 뼈대로 두고 정교화:
+   - 트레이너가 노션에 쓴 것 + 카톡만 사용, **모델의 주관 해석·인과 창작 금지**(매출 인과는 '콘관시 체크'만).
+   - 콘관시 체크=매출 인과/숫자, 콘텐츠 피드백=콘텐츠 개선(매출과 분리), 성 제외 강제(도하님), 과한 높임(께) 금지,
+     비유·관용구·수사·홍보체·공허한 코칭표현 전면 금지, 매출 첫문장 강제 금지(진입점 변주), 매출 표현 간결화(괄호 매출원).
 
 ## 학습한 노션 구조 (중요 — 다음 작업의 전제)
 
@@ -66,5 +81,9 @@
   - 날짜가 딱 안 맞으므로(회원마다 트레이닝 요일 다름) 창 경계에 여유 ±3일(GRACE_DAYS).
 - **회원 명단 = 마스터시트 `상태` 필터** (검색 폐기). 신규/졸업은 노션에서 상태만 바꾸면 자동 반영.
 - **회원 이름은 전체(성 포함)로 다룬다** — 특정에 유리. 성 제외는 인증글 작성 시 프롬프트가 처리.
-- 저장소 이름 `revenue-cert-generator`, 브랜치 `main` 하나. 비밀키는 커밋 안 함(`.env` 로컬 전용).
+- **생성 엔진 = Gemini `gemini-3.5-flash`** (Claude CLI 폐기 — 오버헤드 36초+). 유료 키 사용(무료 티어는 데이터 학습 이슈).
+  - `claude_generator.py`는 `build_user_message`/`SYSTEM_PROMPT_FILE` 재사용 목적으로만 남김(생성엔 안 씀).
+- **funnel 지표 숫자는 노션 "이미지"(콘관시 표)에만 있음** → 텍스트만으론 못 읽음 → **멀티모달(이미지 전송)로 해결.**
+  - 콘관시 체크/콘텐츠 피드백에 유튜브 분석 캡처 + 콘관시 표가 이미지로 들어감(주차마다 양 다름, 아예 이미지만 있는 주도 있음).
+- 저장소 이름 `revenue-cert-generator`, 브랜치 `main` 하나. 비밀키는 커밋 안 함(`.env` 로컬 전용, `NOTION_API_KEY`+`GEMINI_API_KEY`).
 - `bpt-member-log`와 코드 섞지 않음(구조만 참고).
