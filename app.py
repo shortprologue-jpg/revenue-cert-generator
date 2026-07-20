@@ -175,7 +175,8 @@ def _confirm_delete_post(path_str: str) -> None:
         delete_post(path_str)
         # 지금 화면에 띄워둔 글을 지웠으면 결과칸도 비운다.
         if st.session_state.get("hist_loaded") == path_str:
-            for k in ("generated_text", "meta", "edit_area", "hist_loaded"):
+            for k in ("hist_view_body", "hist_view_meta", "hist_view_area",
+                      "hist_loaded"):
                 st.session_state.pop(k, None)
         st.rerun()
 
@@ -286,9 +287,10 @@ def _render_history_sidebar() -> None:
                             type="primary" if is_cur else "secondary",
                         ):
                             body, meta = load_post(p["path"])
-                            st.session_state["generated_text"] = body
-                            st.session_state["meta"] = meta
-                            st.session_state["edit_area"] = body
+                            # 새 생성 영역(generated_text)과 겹치지 않게 별도 키로 → 하단 박스에 표시.
+                            st.session_state["hist_view_body"] = body
+                            st.session_state["hist_view_meta"] = meta
+                            st.session_state["hist_view_area"] = body
                             st.session_state["hist_loaded"] = pth
                             st.session_state["hist_post_gen"] = pgen + 1  # 리마운트=닫힘
                             st.rerun()
@@ -297,7 +299,7 @@ def _render_history_sidebar() -> None:
                                      use_container_width=True):
                             _confirm_delete_post(pth)
     if cur_label:
-        st.caption("✅ 지금 오른쪽에 열려 있는 글")
+        st.caption("✅ 지금 화면 아래에 열려 있는 글")
 
 
 # ── 사이드바 ──────────────────────────────────────────────────────────────────
@@ -656,3 +658,47 @@ if "generated_text" in st.session_state:
                 )
                 st.session_state["hist_loaded"] = str(saved)
                 st.success("저장됨 ✅")
+
+
+# ── 보관함에서 불러온 글 (새 생성 영역과 분리해 하단 전체폭 박스에 표시) ──
+if st.session_state.get("hist_view_body") is not None:
+    hv_meta = st.session_state.get("hist_view_meta", {})
+    hv_name = hv_meta.get("member_name") or "미상"
+    hv_period = hv_meta.get("period") or ""
+    st.divider()
+    with st.container(border=True):
+        st.subheader(
+            f"📚 보관함에서 불러온 글 — {hv_name} · {hv_period}", anchor=False
+        )
+        st.caption("새로 생성한 글과 별개로, 저장돼 있던 글을 여기서 보고 수정할 수 있어요.")
+        hv_edited = st.text_area(
+            "불러온 인증글 — 여기서 바로 수정할 수 있어요",
+            height=460, key="hist_view_area",
+        )
+        hv_today = date.today().strftime("%Y%m%d")
+        hv_header = (
+            f"# BPT 수익화 인증글\n생성일: {hv_today}\n회원: {hv_name}\n"
+            f"기간: {hv_period}\n매출: {hv_meta.get('revenue', '')}\n\n---\n\n"
+        )
+        hc1, hc2, hc3 = st.columns(3)
+        with hc1:
+            st.download_button(
+                "💾 다운로드", data=(hv_header + hv_edited).encode("utf-8"),
+                file_name=f"{hv_today}_{hv_name}.txt", mime="text/plain",
+                use_container_width=True, key="hist_view_dl",
+            )
+        with hc2:
+            if st.button("📁 수정본 저장", use_container_width=True,
+                         key="hist_view_save",
+                         help="이 불러온 글을 고친 내용으로 보관함에 덮어씁니다"):
+                save_post(hv_edited, hv_meta.get("member_name", ""),
+                          hv_period, hv_meta.get("revenue", ""))
+                st.success("저장됨 ✅")
+        with hc3:
+            if st.button("✖️ 닫기", use_container_width=True,
+                         key="hist_view_close",
+                         help="이 영역만 닫습니다(글은 보관함에 그대로 있어요)"):
+                for k in ("hist_view_body", "hist_view_meta",
+                          "hist_view_area", "hist_loaded"):
+                    st.session_state.pop(k, None)
+                st.rerun()
