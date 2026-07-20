@@ -5,9 +5,28 @@
 
 ## 현재 상태 (2026-07-20 기준)
 
-앱 **정상 작동 + E2E 검증 완료.** 큰 변화: **생성 엔진을 Claude Code CLI → Gemini(google-genai)로 교체**하고,
-**노션 이미지(콘관시 지표 표)까지 읽는 멀티모달**을 붙였다. 실제 회원(이도하)으로 노션→이미지→생성까지
-돌려 콘관시 표의 funnel 숫자(유료 고객 전환율·객단가·주차별 클릭률 등)가 인증글에 반영되는 것 확인.
+앱 **정상 작동 + E2E 검증 완료.** 생성 엔진 = **Gemini(google-genai)** + **노션 이미지(콘관시 표) 멀티모달**.
+이번 세션에 **① 프롬프트 톤 2건**, **② 회원 전환 시 입력·출력 초기화(+근본버그 수정)**, **③ 생성글 보관함(히스토리)**
+을 추가했다. 실제 회원(이도하)으로 노션→이미지→생성까지 돌려 funnel 숫자 반영 확인.
+
+### 이번 세션(2026-07-20 오후)에 한 일
+1. **프롬프트 톤 2건** (`prompts/system_prompt.md`):
+   - 인용문 뒤 서술어를 자연스러운 높임 반응형으로("…라고 이야기해 주셨습니다/뿌듯해하셨습니다"), 딱딱한 보고체 금지.
+   - 마지막 문장 = **트레이너 시점의 방향·계획**("…해 나가려고 합니다"), 회원에 대한 기대("…하기를 기대합니다") 금지.
+2. **회원 전환 초기화** (`app.py`): 회원 selectbox `on_change=_reset_member_form` → 기간·매출·카톡·생성글 리셋.
+   - form_nonce 접미사로 입력 위젯 key 를 갈아끼워 리셋(빈 위젯).
+   - ⚠️ **근본버그 수정**: 예전엔 매 rerun 마다 member_sel 비교였는데, 사이드바/삭제의 `st.rerun` 이 col_input 을
+     건너뛰면 member_sel 위젯이 안 그려져 세션에서 사라지고(None) → '바뀐 걸로 오판' → 불러온 글까지 삭제됐다.
+     `on_change`(실제 사용자 변경 시에만 호출)로 바꿔 원천 차단.
+3. **생성글 보관함(히스토리)** — 신규 `src/history_store.py` + `app.py` 사이드바:
+   - 생성하면 **자동 저장**(`outputs/<회원>__<기간>.txt`, 같은 회원·기간이면 덮어씀). 헤더에 회원·기간·매출·생성일.
+   - 사이드바 **📚 보관함** = **회원(검색 팝오버) → 그 회원 인증글(목록 팝오버) → 클릭 즉시 오른쪽에 불러오기 / 🗑️ 삭제.**
+   - ⚠️ **출력칸 위 팝오버는 결과글을 덮어서** 사이드바로 분리(안 겹침). **selectbox 는 '타이핑=검색'이라 편집되는 듯한
+     백스페이스**가 생겨서 → product-classifier 처럼 '팝오버 버튼 + 안 검색창 + 목록 버튼'으로 구현(트리거는 버튼=편집불가).
+   - 팝오버 선택 후 닫힘 = 컨테이너 key 에 gen 붙여 선택 시 +1(리마운트). (product-classifier 교훈)
+   - `outputs/`(회원 실데이터)는 `.gitignore` 로 커밋 제외 — **두 노트북 동기화는 OneDrive 담당**.
+4. **keep-alive 조사**: product-classifier 의 `supabase-keepalive.yml` 은 **Supabase 무료 프로젝트 7일 방치 정지** 방지용.
+   현재 우리 앱은 **로컬**이라 불필요. **웹 배포(2단계) 때** 필요(아래 '다음 할 일').
 
 ### 실행 방법 (이 노트북)
 - 앱 실행: 직접 `C:\Users\xytyp\AppData\Local\Programs\Python\Python312\Scripts\streamlit.exe run app.py --server.port 8502`.
@@ -67,6 +86,12 @@
 
 ## 다음 할 일 (우선순위)
 
+0. **⭐웹 배포(2단계) — 사용자 목표**: 노트북 2대에서 URL 로 접속(product-classifier 처럼). 큰 별도 작업.
+   - **호스팅 = Streamlit Cloud**(무료). ⚠️ **파일시스템이 재시작 때 날아감** → `outputs/` 로컬 저장이 안 남음.
+   - **저장소를 Supabase 로 이전**: `history_store.py` 의 함수 4개(list/save/load/delete) 백엔드만 갈아끼우면 됨(그래서 분리 설계함).
+   - **keep-alive 필요**: Supabase 무료는 7일 방치 시 정지 → product-classifier 의 `.github/workflows/supabase-keepalive.yml`
+     + `_keepalive/setup.sql` 방식(이틀에 한 번 DB ping) 이식. GitHub Secrets 에 SUPABASE_URL/KEY.
+   - **키(NOTION/GEMINI)**를 `.env` 대신 **Streamlit Cloud Secrets** 로.
 1. **읽기 속도 최적화** — 기록 많은 회원(명지애)은 37초. 토글 자식 조회 병렬화 검토.
 2. **`앱실행.bat` 이 노트북 대응** — `python -m streamlit`이 hermes venv라 실패 가능. `py -3` 등으로 견고화 검토.
 3. (선택) 생성 진행 표시 개선 — `st.status`+`st.write_stream`으로 노션 로드→생성을 단계형 UX로 묶기(계획만 세워둠, 생성 로직 건드려서 보류).
@@ -86,4 +111,9 @@
 - **funnel 지표 숫자는 노션 "이미지"(콘관시 표)에만 있음** → 텍스트만으론 못 읽음 → **멀티모달(이미지 전송)로 해결.**
   - 콘관시 체크/콘텐츠 피드백에 유튜브 분석 캡처 + 콘관시 표가 이미지로 들어감(주차마다 양 다름, 아예 이미지만 있는 주도 있음).
 - 저장소 이름 `revenue-cert-generator`, 브랜치 `main` 하나. 비밀키는 커밋 안 함(`.env` 로컬 전용, `NOTION_API_KEY`+`GEMINI_API_KEY`).
+- **보관함 = 로컬 파일(`src/history_store.py`)**, 저장은 `outputs/<회원>__<기간>.txt`(회원+기간 같으면 덮어씀).
+  - **UI/저장 분리**(product-classifier 원칙): 나중에 Supabase 로 백엔드만 교체하려고 list/save/load/delete 4함수로 캡슐화.
+  - `outputs/`는 회원 실데이터 → **커밋 금지(.gitignore)**, 동기화는 OneDrive.
+  - UI 는 selectbox 대신 **팝오버(버튼)+검색창+목록** — selectbox 의 타이핑편집(백스페이스) 혼란 회피. 사이드바 배치로 출력칸과 안 겹침.
+- **참고 레포 = product-classifier**(비공개, 브랜치 `deploy`) — pull 금지, 구조·규칙만 참고. 회원 팝오버·period 선택기·keepalive 이식 원본.
 - `bpt-member-log`와 코드 섞지 않음(구조만 참고).

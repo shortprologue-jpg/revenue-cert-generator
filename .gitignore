@@ -4,6 +4,11 @@
 *.key
 secrets.*
 
+# === 생성 결과 = 회원 실데이터(매출·인증글) — 절대 커밋 금지 ===
+# 두 노트북 동기화는 OneDrive 가 담당(프로젝트가 OneDrive 폴더 안).
+# 나중 웹 배포 시엔 Supabase 창고로 이전.
+outputs/
+
 # === OMC / Claude Code 작업 캐시 ===
 .omc/
 .claude/

@@ -15,7 +15,7 @@ import streamlit as st
 import streamlit.components.v1 as components  # 부모 DOM(달력) 조작용 JS 주입
 
 from src.gemini_generator import generate_certification_post
-from src.file_saver import save_output
+from src.history_store import delete_post, list_posts, load_post, save_post
 from src.notion_fetcher import (
     NotionFetchError,
     PageNotFoundError,
@@ -138,6 +138,156 @@ def save_env_var(name: str, value: str) -> None:
     os.environ[name] = value
 
 
+def _reset_member_form() -> None:
+    """회원 selectbox 변경 시에만 호출(on_change): 입력 위젯 key 를 갈아끼울
+    form_nonce +1 + 출력물(생성글·메타·보관함선택) 비움. 실제 사용자 변경에서만
+    돌아서, 사이드바/삭제의 st.rerun 이 유발하던 오발동 리셋을 없앤다."""
+    st.session_state["form_nonce"] = st.session_state.get("form_nonce", 0) + 1
+    for k in ("generated_text", "meta", "edit_area", "hist_loaded"):
+        st.session_state.pop(k, None)
+
+
+# ── 보관함(생성글 히스토리) ────────────────────────────────────────────────────
+# 회원별 → 인증글 2단계로 '사이드바'에 배치 → 출력 영역과 물리적으로 분리(안 겹침).
+# 저장은 history_store(로컬 파일). 나중에 Supabase 로 백엔드만 교체 가능.
+
+
+@st.dialog("보관함에서 삭제")
+def _confirm_delete_post(path_str: str) -> None:
+    st.write("이 인증글을 보관함에서 삭제할까요?")
+    st.caption(Path(path_str).name)
+    c1, c2 = st.columns(2)
+    if c1.button("취소", use_container_width=True):
+        st.rerun()
+    if c2.button("삭제", type="primary", use_container_width=True):
+        delete_post(path_str)
+        # 지금 화면에 띄워둔 글을 지웠으면 결과칸도 비운다.
+        if st.session_state.get("hist_loaded") == path_str:
+            for k in ("generated_text", "meta", "edit_area", "hist_loaded"):
+                st.session_state.pop(k, None)
+        st.rerun()
+
+
+def _post_label(p: dict) -> str:
+    """보관함 인증글 라벨: '기간 (MM/DD)'. 기간 없으면 파일명."""
+    core = p["period"] or p["path"].stem
+    created = p.get("created") or ""
+    when = f" ({created[4:6]}/{created[6:8]})" if len(created) == 8 else ""
+    return f"{core}{when}"
+
+
+_HIST_CSS = """
+<style>
+/* 보관함 목록 버튼: 왼쪽 정렬 + 길면 말줄임(…) */
+[class*="st-key-histmem_"] button, [class*="st-key-histpost_"] button {
+    justify-content: flex-start !important;
+}
+[class*="st-key-histmem_"] button p, [class*="st-key-histpost_"] button p {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-align: left; width: 100%;
+}
+/* 🗑️ = 박스 없는 회색 이모지 */
+[class*="st-key-histdel_"] button {
+    background: transparent !important; border: none !important;
+    box-shadow: none !important; filter: grayscale(1); opacity: .5;
+}
+[class*="st-key-histdel_"] button:hover { opacity: .95; }
+</style>
+"""
+
+
+def _render_history_sidebar() -> None:
+    """사이드바 보관함 — 회원(검색 팝오버) → 그 회원의 인증글(목록 팝오버) → 클릭 즉시 불러오기.
+
+    selectbox 는 '타이핑=검색'이라 값이 편집되는 듯한 백스페이스가 생긴다 →
+    product-classifier 처럼 '팝오버 트리거(버튼) + 안에 검색창 + 목록 버튼' 으로 구현.
+    트리거는 버튼이라 편집 불가, 검색은 팝오버 안 전용 검색창이 담당. 사이드바라 안 겹침.
+    팝오버가 선택 후 안 닫히는 함정 → 컨테이너 key 에 gen 을 붙여 선택 시 +1(리마운트=닫힘).
+    """
+    st.markdown(_HIST_CSS, unsafe_allow_html=True)
+    st.header("📚 보관함", anchor=False)
+    posts = list_posts()  # 최신순
+    if not posts:
+        st.caption("아직 저장된 인증글이 없어요.\n생성하면 자동으로 여기에 쌓입니다.")
+        return
+
+    # 회원별 그룹(최신순 유지)
+    by_member: dict[str, list] = {}
+    for p in posts:
+        by_member.setdefault(p["member_name"] or "미상", []).append(p)
+    members = list(by_member.keys())
+
+    # ── 회원 선택 팝오버 (검색창 + 버튼 목록) ──
+    mgen = st.session_state.get("hist_mem_gen", 0)
+    cur_member = st.session_state.get("hist_member")
+    if cur_member not in members:  # 저장된 값이 사라졌으면 미선택으로
+        cur_member = None
+    trig = f"👤 {cur_member}" if cur_member else "👤 회원 선택"
+    with st.container(key=f"histmemhold_{mgen}"):
+        with st.popover(trig, use_container_width=True):
+            q = st.text_input(
+                "회원 검색", placeholder="이름으로 찾기",
+                key=f"hist_mem_q_{mgen}", label_visibility="collapsed",
+            )
+            ql = (q or "").strip().lower()
+            shown_m = [m for m in members if ql in m.lower()] if ql else members
+            with st.container(height=min(max(len(shown_m), 1), 6) * 44 + 8, border=False):
+                if not shown_m:
+                    st.caption("검색 결과가 없어요.")
+                for i, m in enumerate(members):
+                    if m not in shown_m:
+                        continue
+                    is_cur = (m == cur_member)
+                    if st.button(
+                        f"{m}  ·  {len(by_member[m])}건", key=f"histmem_{i}",
+                        use_container_width=True,
+                        type="primary" if is_cur else "secondary",
+                    ):
+                        st.session_state["hist_member"] = m
+                        st.session_state["hist_mem_gen"] = mgen + 1  # 리마운트=닫힘+검색초기화
+                        st.rerun()
+
+    if not cur_member:
+        st.caption(f"저장된 회원 {len(members)}명. 회원을 고르세요.")
+        return
+
+    # ── 그 회원의 인증글 선택 팝오버 (줄마다 [선택][🗑️]) ──
+    mposts = by_member[cur_member]
+    pgen = st.session_state.get("hist_post_gen", 0)
+    cur_post = st.session_state.get("hist_loaded")
+    cur_label = next((_post_label(p) for p in mposts if str(p["path"]) == cur_post), None)
+    ptrig = f"🗓️ {cur_label}" if cur_label else "🗓️ 인증글 선택"
+    mi = members.index(cur_member)
+    with st.container(key=f"histposthold_{mi}_{pgen}"):
+        with st.popover(ptrig, use_container_width=True):
+            with st.container(height=min(max(len(mposts), 1), 6) * 46 + 8, border=False):
+                for i, p in enumerate(mposts):
+                    pth = str(p["path"])
+                    is_cur = (pth == cur_post)
+                    c_name, c_del = st.columns(
+                        [5, 1], gap="small", vertical_alignment="center"
+                    )
+                    with c_name:
+                        if st.button(
+                            _post_label(p), key=f"histpost_{i}",
+                            use_container_width=True,
+                            type="primary" if is_cur else "secondary",
+                        ):
+                            body, meta = load_post(p["path"])
+                            st.session_state["generated_text"] = body
+                            st.session_state["meta"] = meta
+                            st.session_state["edit_area"] = body
+                            st.session_state["hist_loaded"] = pth
+                            st.session_state["hist_post_gen"] = pgen + 1  # 리마운트=닫힘
+                            st.rerun()
+                    with c_del:
+                        if st.button("🗑️", key=f"histdel_{i}",
+                                     use_container_width=True):
+                            _confirm_delete_post(pth)
+    if cur_label:
+        st.caption("✅ 지금 오른쪽에 열려 있는 글")
+
+
 # ── 사이드바 ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -196,6 +346,9 @@ with st.sidebar:
             os.environ["GEMINI_API_KEY"] = gemini_key_input.strip()
             st.success("✅ 저장 완료!")
 
+    st.divider()
+    _render_history_sidebar()
+
 
 # ── 메인: 2단 레이아웃 ────────────────────────────────────────────────────────
 
@@ -203,6 +356,14 @@ col_input, col_output = st.columns([1, 1], gap="large", border=True)
 
 with col_input:
     st.subheader("입력", anchor=False)
+
+    # ── 회원이 바뀌면 입력·출력을 초기화 (아래 회원 selectbox on_change 에서 처리) ──
+    # 예전엔 매 rerun 마다 member_sel 을 비교했는데, 사이드바/삭제의 st.rerun 이
+    # col_input 을 건너뛰면 member_sel 위젯이 안 그려져 세션에서 사라지고(None) →
+    # 다음 rerun 에서 '바뀐 걸로' 오판해 방금 불러온 글까지 지웠다.
+    # on_change(_reset_member_form)는 '실제 사용자 변경'에서만 돌아 그 오판이 없다.
+    # form_nonce = 입력 위젯 key 접미사(바뀌면 빈 위젯으로 리마운트).
+    nonce = st.session_state.setdefault("form_nonce", 0)
 
     # ── 회원 선택 (노션에서 자동 수집, 이름 드롭다운) ──
     members: list[dict] = []
@@ -219,6 +380,8 @@ with col_input:
         selected_member = st.selectbox(
             "회원 선택 *",
             options=member_options,
+            key="member_sel",
+            on_change=_reset_member_form,
         )
     with col_refresh:
         st.write("")
@@ -243,6 +406,7 @@ with col_input:
         "수익화 기간 *",
         value=(),
         format="YYYY/MM/DD",
+        key=f"date_{nonce}",  # 회원 바뀌면 새 key → 기간도 초기화(회원마다 기간 다름)
     )
     localize_datepicker()
     period_str = ""
@@ -262,7 +426,9 @@ with col_input:
     elif isinstance(date_range, (tuple, list)) and len(date_range) == 1:
         st.caption("종료일도 선택하세요.")
 
-    revenue = st.text_input("매출 금액 *", placeholder="2,027,990원")
+    revenue = st.text_input(
+        "매출 금액 *", placeholder="2,027,990원", key=f"revenue_{nonce}"
+    )
 
     st.markdown("**카카오톡 내용** *")
     uploaded_file = st.file_uploader(
@@ -270,21 +436,23 @@ with col_input:
         type=["txt"],
         label_visibility="collapsed",
         help="KakaoTalk에서 대화 내보내기로 받은 .txt 파일을 여기에 드래그하세요",
+        key=f"kakao_file_{nonce}",  # 회원 바뀌면 새 key → 업로드 파일도 초기화
     )
-    kakao_text = ""
+    kakao_key = f"kakao_{nonce}"
     if uploaded_file is not None:
-        kakao_text = uploaded_file.read().decode("utf-8", errors="replace")
-        st.success(f"파일 로드 완료 ({len(kakao_text):,}자)")
+        file_text = uploaded_file.read().decode("utf-8", errors="replace")
+        st.success(f"파일 로드 완료 ({len(file_text):,}자)")
+        # 업로드 내용으로 입력칸 채우기(아직 비어 있을 때만 — 위젯 생성 전 주입).
+        if not st.session_state.get(kakao_key):
+            st.session_state[kakao_key] = file_text
 
-    kakao_input = st.text_area(
+    kakao_text = st.text_area(
         "카카오톡 내용 직접 입력",
-        value=kakao_text,
         height=220,
         placeholder="카카오톡 내용을 여기에 붙여넣기 하세요",
         label_visibility="collapsed",
+        key=kakao_key,  # 회원 바뀌면 새 key → 이전 카톡 내용 초기화
     )
-    if kakao_input:
-        kakao_text = kakao_input
 
     can_generate = bool(notion_key and gemini_ok)
     generate_btn = st.button(
@@ -301,6 +469,10 @@ with col_input:
 
 with col_output:
     st.subheader("생성된 인증글", anchor=False)
+    # 현재 화면에 뜬 글이 누구·언제 것인지 표시(보관함에서 불러왔거나 방금 생성).
+    _cur_meta = st.session_state.get("meta")
+    if _cur_meta and _cur_meta.get("member_name"):
+        st.caption(f"📄 {_cur_meta.get('member_name','')} · {_cur_meta.get('period','')}")
     output_placeholder = st.empty()
     status_placeholder = st.empty()
 
@@ -411,6 +583,15 @@ if generate_btn:
                     "revenue": revenue.strip(),
                 }
                 st.session_state["edit_area"] = full_text
+                # 자동 저장 — 생성하면 보관함에 바로 쌓인다(같은 회원·기간이면 덮어씀).
+                try:
+                    _saved = save_post(
+                        full_text, member_name.strip(),
+                        period_str.strip(), revenue.strip(),
+                    )
+                    st.session_state["hist_loaded"] = str(_saved)
+                except Exception as _e:  # noqa: BLE001 — 저장 실패해도 생성 결과는 보존
+                    st.warning(f"⚠️ 보관함 자동 저장 실패(글은 화면에 있음): {_e}")
 
         # 스트리밍으로 그린 잔상을 지워, 아래 '수정 가능' 편집칸 하나만 남긴다.
         output_placeholder.empty()
@@ -452,11 +633,14 @@ if "generated_text" in st.session_state:
             )
 
         with btn_col2:
-            if st.button("📁 서버 저장", use_container_width=True):
-                saved = save_output(
+            # 자동 저장은 '생성 원문' 기준. 여기서 수정한 내용을 보관함에 덮어써 반영.
+            if st.button("📁 수정본 저장", use_container_width=True,
+                         help="위에서 고친 내용을 보관함에 덮어씁니다(자동저장 갱신)"):
+                saved = save_post(
                     edited,
                     meta.get("member_name", ""),
                     meta.get("period", ""),
                     meta.get("revenue", ""),
                 )
-                st.success(f"저장 완료: outputs/{saved.name}")
+                st.session_state["hist_loaded"] = str(saved)
+                st.success(f"저장됨: {saved.name}")
