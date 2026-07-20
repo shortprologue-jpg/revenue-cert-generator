@@ -93,7 +93,7 @@
      + `_keepalive/setup.sql` 방식(이틀에 한 번 DB ping) 이식. GitHub Secrets 에 SUPABASE_URL/KEY.
    - **키(NOTION/GEMINI)**를 `.env` 대신 **Streamlit Cloud Secrets** 로.
 1. **읽기 속도 최적화** — 기록 많은 회원(명지애)은 37초. 토글 자식 조회 병렬화 검토.
-2. **`앱실행.bat` 이 노트북 대응** — `python -m streamlit`이 hermes venv라 실패 가능. `py -3` 등으로 견고화 검토.
+2. ~~**`앱실행.bat` 이 노트북 대응**~~ ✅ 완료(2026-07-20) — bat이 `streamlit` 설치된 파이썬을 자동 탐색(`py -3` import 테스트→실패 시 `python` 폴백, 둘 다 없으면 안내 후 종료). 이 노트북에서 `py -3` 선택 + 앱 HTTP 200 구동 검증. 두 노트북 모두 더블클릭 실행 가능.
 3. (선택) 생성 진행 표시 개선 — `st.status`+`st.write_stream`으로 노션 로드→생성을 단계형 UX로 묶기(계획만 세워둠, 생성 로직 건드려서 보류).
 4. (선택) 생성한 인증글을 마스터시트 행/인증자료에 되기록(back-write) 할지 결정.
 5. 활동 28명 중 여러 명으로 추가 E2E — 신규(0~1주차) 회원은 주차 기록이 적어 카톡 위주가 될 수 있음.
