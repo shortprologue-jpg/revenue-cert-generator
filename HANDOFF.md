@@ -86,12 +86,16 @@
 
 ## 다음 할 일 (우선순위)
 
-0. **⭐웹 배포(2단계) — 사용자 목표**: 노트북 2대에서 URL 로 접속(product-classifier 처럼). 큰 별도 작업.
-   - **호스팅 = Streamlit Cloud**(무료). ⚠️ **파일시스템이 재시작 때 날아감** → `outputs/` 로컬 저장이 안 남음.
-   - **저장소를 Supabase 로 이전**: `history_store.py` 의 함수 4개(list/save/load/delete) 백엔드만 갈아끼우면 됨(그래서 분리 설계함).
-   - **keep-alive 필요**: Supabase 무료는 7일 방치 시 정지 → product-classifier 의 `.github/workflows/supabase-keepalive.yml`
-     + `_keepalive/setup.sql` 방식(이틀에 한 번 DB ping) 이식. GitHub Secrets 에 SUPABASE_URL/KEY.
-   - **키(NOTION/GEMINI)**를 `.env` 대신 **Streamlit Cloud Secrets** 로.
+0. **⭐웹 배포(2단계) — 진행 중(2026-07-20): 🅰코드 준비 완료, 🅱계정 작업 남음.** 방식=Streamlit Cloud+Supabase(사용자 선택).
+   - ✅ **🅰코드(내가 완료·검증)**: `history_store.py` 백엔드 자동전환(SUPABASE 키 있으면 Postgres `posts` 테이블 upsert,
+     없으면 기존 로컬 파일 — 로컬 CRUD·덮어쓰기 단위테스트 + 앱 HTTP 200 통과). `app.py` `st.secrets`→env 브리지 +
+     Path 의존 2줄 견고화. `requirements.txt` supabase 추가(지연 임포트). `.github/workflows/supabase-keepalive.yml`
+     (매일 select + **GitHub 60일 자동 비활성화 방지**=gautamkrishnar/keepalive-workflow — 발라내기가 놓쳐 정지당한 부분).
+     `deploy/supabase_setup.sql`(posts+keepalive 테이블+RLS anon 정책), `.streamlit/secrets.toml.example`.
+   - ⬜ **🅱사용자 계정 작업(남음, 내가 화면 안내)**: ① Supabase 가입→프로젝트(리전 서울)→SQL 붙여넣기→URL·anon키 복사
+     ② Streamlit Cloud 가입→저장소 연결→Secrets 붙여넣기→Deploy ③ GitHub Secrets 에 SUPABASE_URL/KEY(keepalive용).
+   - **결정**: 저장소 **공개(Public) 전환**(무료 비공개 앱 1슬롯을 발라내기가 점유 가능 → 공개면 앱 무제한). Supabase 키=**anon**(service_role 아님, RLS 정책으로 제어).
+   - ⚠️ 발라내기 교훈: 클라우드 방식은 keepalive 필수(안 하면 7일 후 Supabase 정지). 발라내기는 이 때문에 VPS 이전 검토 중이었음.
 1. **읽기 속도 최적화** — 기록 많은 회원(명지애)은 37초. 토글 자식 조회 병렬화 검토.
 2. ~~**`앱실행.bat` 이 노트북 대응**~~ ✅ 완료(2026-07-20) — bat이 `streamlit` 설치된 파이썬을 자동 탐색(`py -3` import 테스트→실패 시 `python` 폴백, 둘 다 없으면 안내 후 종료). 이 노트북에서 `py -3` 선택 + 앱 HTTP 200 구동 검증. 두 노트북 모두 더블클릭 실행 가능.
 3. (선택) 생성 진행 표시 개선 — `st.status`+`st.write_stream`으로 노션 로드→생성을 단계형 UX로 묶기(계획만 세워둠, 생성 로직 건드려서 보류).

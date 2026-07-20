@@ -1,0 +1,33 @@
+name: Supabase Keep-Alive
+
+# 왜: Supabase 무료 프로젝트는 7일 방치되면 자동정지된다(앱이 DB 연결 오류로 죽음).
+#     → 매일 가벼운 select 요청 한 번으로 "활동"을 남겨 깨어 있게 유지한다.
+# 함정: GitHub 은 스케줄 workflow 를 저장소가 60일간 조용하면(=새 커밋 없으면) 꺼버린다.
+#       cron 실행 자체는 활동으로 안 쳐준다 → keepalive-workflow 액션이 주기적으로
+#       heartbeat 커밋을 남겨 그 자동 비활성화까지 막는다. (이중 방어)
+
+on:
+  schedule:
+    - cron: "37 6 * * *"   # 매일 06:37 UTC. 정각(0분)은 러너 혼잡으로 지연·누락 잦아 피함.
+  workflow_dispatch: {}     # Actions 탭에서 수동 실행 버튼(첫 설정 후 1회 눌러 200 확인용).
+
+permissions:
+  contents: write           # keepalive-workflow 가 heartbeat 커밋을 push 하려면 필요.
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake Supabase (select on real keepalive table)
+        # 실제로 존재하는 keepalive 테이블을 select 해야 활동으로 인정된다(루트 엔드포인트만은 불안정).
+        # -f: HTTP 에러면 실패 종료코드 → workflow 가 빨간불로 떠서 문제를 바로 알 수 있음.
+        run: |
+          curl -sf \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/keepalive?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}"
+
+      - uses: actions/checkout@v4
+
+      - name: Prevent GitHub from disabling this scheduled workflow (60-day rule)
+        uses: gautamkrishnar/keepalive-workflow@v2

@@ -3,6 +3,8 @@
 .env.local
 *.key
 secrets.*
+# 예시(플레이스홀더)는 커밋 허용 — 실제 secrets.toml 은 위 secrets.* 규칙으로 계속 제외
+!secrets.toml.example
 
 # === 생성 결과 = 회원 실데이터(매출·인증글) — 절대 커밋 금지 ===
 # 두 노트북 동기화는 OneDrive 가 담당(프로젝트가 OneDrive 폴더 안).

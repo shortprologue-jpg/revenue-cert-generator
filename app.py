@@ -14,6 +14,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 import streamlit.components.v1 as components  # 부모 DOM(달력) 조작용 JS 주입
 
+# 배포(Streamlit Cloud)엔 .env 가 없다 → st.secrets 의 키를 환경변수로 브리지한다.
+# '없을 때만' 채우므로 로컬(.env override) 동작은 그대로. 생성기·노션·보관함이 os.environ 에서 읽음.
+for _k in ("NOTION_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+           "SUPABASE_URL", "SUPABASE_KEY"):
+    if not os.environ.get(_k):
+        try:
+            _v = st.secrets.get(_k)
+        except Exception:  # noqa: BLE001 — secrets.toml 미존재 시 예외 → 로컬로 폴백
+            _v = None
+        if _v:
+            os.environ[_k] = str(_v)
+
 from src.gemini_generator import generate_certification_post
 from src.history_store import delete_post, list_posts, load_post, save_post
 from src.notion_fetcher import (
@@ -170,7 +182,7 @@ def _confirm_delete_post(path_str: str) -> None:
 
 def _post_label(p: dict) -> str:
     """보관함 인증글 라벨: '기간 (MM/DD)'. 기간 없으면 파일명."""
-    core = p["period"] or p["path"].stem
+    core = p["period"] or Path(str(p["path"])).stem
     created = p.get("created") or ""
     when = f" ({created[4:6]}/{created[6:8]})" if len(created) == 8 else ""
     return f"{core}{when}"
@@ -643,4 +655,4 @@ if "generated_text" in st.session_state:
                     meta.get("revenue", ""),
                 )
                 st.session_state["hist_loaded"] = str(saved)
-                st.success(f"저장됨: {saved.name}")
+                st.success("저장됨 ✅")
