@@ -3,7 +3,10 @@
 > 여러 컴퓨터를 오갈 때 이 파일을 읽고 이어서 작업한다.
 > **앉으면 pull, 뜨면 push.** (`worksync start` / `worksync end`)
 
-## 현재 상태 (2026-07-20 기준)
+## 현재 상태 (2026-07-21 기준)
+
+**⭐ 웹 배포 완료·라이브** — URL 로 어디서든 접속(아래 '다음 할 일' #0). 이번 세션(2026-07-21)에 한 일:
+웹배포(Supabase Postgres 백엔드 + st.secrets + Streamlit Cloud 배포), 프롬프트 개선(비포=문제 진단도 노션 구체 사례 살리게), 보관함 UI 분리(불러온 글을 오른쪽 생성영역 아래 별도 박스로), 보안 규칙(never-expose-secrets: 비밀키 채팅 노출 금지) 메모리화. **keepalive 만 GitHub 차단으로 대기**(#0 참조).
 
 앱 **정상 작동 + E2E 검증 완료.** 생성 엔진 = **Gemini(google-genai)** + **노션 이미지(콘관시 표) 멀티모달**.
 이번 세션에 **① 프롬프트 톤 2건**, **② 회원 전환 시 입력·출력 초기화(+근본버그 수정)**, **③ 생성글 보관함(히스토리)**
@@ -86,16 +89,14 @@
 
 ## 다음 할 일 (우선순위)
 
-0. **⭐웹 배포(2단계) — 진행 중(2026-07-20): 🅰코드 준비 완료, 🅱계정 작업 남음.** 방식=Streamlit Cloud+Supabase(사용자 선택).
-   - ✅ **🅰코드(내가 완료·검증)**: `history_store.py` 백엔드 자동전환(SUPABASE 키 있으면 Postgres `posts` 테이블 upsert,
-     없으면 기존 로컬 파일 — 로컬 CRUD·덮어쓰기 단위테스트 + 앱 HTTP 200 통과). `app.py` `st.secrets`→env 브리지 +
-     Path 의존 2줄 견고화. `requirements.txt` supabase 추가(지연 임포트). `.github/workflows/supabase-keepalive.yml`
-     (매일 select + **GitHub 60일 자동 비활성화 방지**=gautamkrishnar/keepalive-workflow — 발라내기가 놓쳐 정지당한 부분).
-     `deploy/supabase_setup.sql`(posts+keepalive 테이블+RLS anon 정책), `.streamlit/secrets.toml.example`.
-   - ⬜ **🅱사용자 계정 작업(남음, 내가 화면 안내)**: ① Supabase 가입→프로젝트(리전 서울)→SQL 붙여넣기→URL·anon키 복사
-     ② Streamlit Cloud 가입→저장소 연결→Secrets 붙여넣기→Deploy ③ GitHub Secrets 에 SUPABASE_URL/KEY(keepalive용).
-   - **결정**: 저장소 **공개(Public) 전환**(무료 비공개 앱 1슬롯을 발라내기가 점유 가능 → 공개면 앱 무제한). Supabase 키=**anon**(service_role 아님, RLS 정책으로 제어).
-   - ⚠️ 발라내기 교훈: 클라우드 방식은 keepalive 필수(안 하면 7일 후 Supabase 정지). 발라내기는 이 때문에 VPS 이전 검토 중이었음.
+0. ~~⭐웹 배포(2단계)~~ ✅ **완료·라이브(2026-07-21)** — Streamlit Cloud + Supabase.
+   - **URL**: https://revenue-cert-generator-ehoztwbcdjco68tv2f45ep.streamlit.app/ (비공개 앱 — 본인 GitHub 로그인 시 접속. 회원 데이터라 비공개가 안전.) 저장소는 **public**(Streamlit 무료 앱 무제한).
+   - **코드**: `history_store.py` 백엔드 자동전환(SUPABASE 키 있으면 Postgres `posts` upsert, 없으면 로컬 파일 — app.py 무영향, 4함수 인터페이스 유지). `app.py` `st.secrets`→env 브리지 + Path 의존 2줄 견고화. `requirements.txt` supabase(지연 임포트). **Python 3.12**(배포 시 3.14 기본이라 낮춰야 함).
+   - **Supabase**: 새 프로젝트 `revenue-cert`(리전 서울), `posts`+`keepalive` 테이블 + RLS anon 정책(`deploy/supabase_setup.sql` SQL Editor 1회 실행). 발라내기 프로젝트와 **분리**(발라내기는 삭제 계획 있어 섞으면 위험). 키 = **anon/publishable**(service_role/secret 아님, RLS 로 제어).
+   - **Secrets**: Streamlit Cloud 에 NOTION/GEMINI/SUPABASE_URL/SUPABASE_KEY(TOML). GitHub Secrets(keepalive용)에 SUPABASE_URL/KEY 등록 완료.
+   - ⚠️ **keepalive 만 대기 중**: GitHub Actions 가 **"Repository access blocked"** 로 막힘 — 저장소를 오늘 **public 전환 + 신규활동 많아** GitHub 이 이 저장소만 일시 제한(계정·이메일 정상, **발라내기(private)는 세션23부터 keepalive 정상 작동 중** — 앞서 "발라내기가 keepalive 놓쳤다"고 한 건 오조사였음, 정정).
+     - workflow(`.github/workflows/supabase-keepalive.yml`: 매일 select + gautamkrishnar/keepalive-workflow 로 60일 자동비활성화 방지)·secret 은 **이미 완비 — 차단만 풀리면 자동 작동.**
+     - **대응 순서**: ① 2~3일 후 Actions 탭에서 "Supabase Keep-Alive" 수동 실행 → 초록불이면 끝. ② 안 풀리면 GitHub Support(support.github.com) 문의("Repository access blocked, account verified, restore Actions"). ③ 그래도 안 되면 **cron-job.org(무료)** 로 매일 Supabase 핑: URL=`https://<프로젝트>.supabase.co/rest/v1/keepalive?select=id&limit=1`, 헤더 `apikey`+`Authorization: Bearer`=anon key. Supabase 7일 방치 시 정지라 며칠 여유 있음.
 1. **읽기 속도 최적화** — 기록 많은 회원(명지애)은 37초. 토글 자식 조회 병렬화 검토.
 2. ~~**`앱실행.bat` 이 노트북 대응**~~ ✅ 완료(2026-07-20) — bat이 `streamlit` 설치된 파이썬을 자동 탐색(`py -3` import 테스트→실패 시 `python` 폴백, 둘 다 없으면 안내 후 종료). 이 노트북에서 `py -3` 선택 + 앱 HTTP 200 구동 검증. 두 노트북 모두 더블클릭 실행 가능.
 3. (선택) 생성 진행 표시 개선 — `st.status`+`st.write_stream`으로 노션 로드→생성을 단계형 UX로 묶기(계획만 세워둠, 생성 로직 건드려서 보류).
