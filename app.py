@@ -479,38 +479,41 @@ with col_input:
     )
 
     # 전달(前月) 수익화 데이터 — 이번 달이 성과 달인지 준비·정체 달인지 판단하는 참고.
+    # UX: 텍스트(①)와 이미지(②)를 명확히 나누고, 이미지의 업로드·드래그·붙여넣기는
+    #     하나의 테두리 카드로 묶어 "첨부 방법이 흩어져 보이는" 문제를 없앤다.
     st.markdown("**전달(前月) 수익화 데이터** (선택)")
-    st.caption(
-        "이번 달이 성과 달인지 준비·정체 달인지 판단하는 데 씁니다. "
-        "전달 매출·지표를 텍스트로 적거나, 콘관시 표 캡처를 올리세요."
-    )
+    st.caption("이번 달이 성과 달인지 준비·정체 달인지 가늠하는 참고예요.")
+
+    # ① 텍스트 요약
     prev_month_text = st.text_area(
-        "전달 수익화 데이터 직접 입력",
-        height=110,
+        "전달 데이터 텍스트",
+        height=90,
         placeholder="예: 전달(5월) 매출 9,200,000원 · 유료 전환율 5.1% · 객단가 61만원",
         label_visibility="collapsed",
         key=f"prevm_text_{nonce}",
     )
-    prev_month_files = st.file_uploader(
-        "전달 데이터 이미지 업로드",
-        type=["png", "jpg", "jpeg", "webp"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-        help="업로드 버튼으로 선택하거나, 이미지를 이 영역에 드래그앤드롭",
-        key=f"prevm_img_{nonce}",
-    )
 
-    # 클립보드 붙여넣기(Ctrl+V) — 캡처 후 버튼 누르고 붙여넣으면 바로 첨부.
+    # ② 이미지 첨부 — 업로드·드래그·붙여넣기를 한 카드에 모아 하나의 영역으로 인식되게.
     prev_paste_imgs: list[bytes] = []
-    if _HAS_PASTE:
-        _paste = _pbutton("📋 캡처 이미지 붙여넣기 (Ctrl+V)", key=f"prevm_paste_{nonce}")
-        if _paste is not None and getattr(_paste, "image_data", None) is not None:
-            _buf = BytesIO()
-            _paste.image_data.save(_buf, format="PNG")
-            prev_paste_imgs.append(_buf.getvalue())
-            st.image(_paste.image_data, width=180, caption="붙여넣은 이미지")
-    else:
-        st.caption("💡 배포 앱에서는 캡처 후 Ctrl+V 붙여넣기도 됩니다.")
+    with st.container(border=True):
+        st.caption("🖼️ 이미지로 첨부 (콘관시 표 캡처 등) — 클릭·드래그·붙여넣기 모두 가능")
+        prev_month_files = st.file_uploader(
+            "이미지 업로드",
+            type=["png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+            help="업로드 버튼으로 선택하거나, 이 영역에 드래그앤드롭",
+            key=f"prevm_img_{nonce}",
+        )
+        if _HAS_PASTE:
+            _paste = _pbutton("📋 캡처 붙여넣기 (Ctrl+V)", key=f"prevm_paste_{nonce}")
+            if _paste is not None and getattr(_paste, "image_data", None) is not None:
+                _buf = BytesIO()
+                _paste.image_data.save(_buf, format="PNG")
+                prev_paste_imgs.append(_buf.getvalue())
+                st.image(_paste.image_data, width=180, caption="붙여넣은 이미지")
+        else:
+            st.caption("💡 배포 앱에서는 캡처 후 Ctrl+V 붙여넣기도 됩니다.")
 
     can_generate = bool(notion_key and gemini_ok)
     generate_btn = st.button(
