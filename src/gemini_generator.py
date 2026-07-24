@@ -46,6 +46,26 @@ def _fetch_image_parts(urls: list[str] | None) -> list:
     return parts
 
 
+def _guess_img_mime(data: bytes) -> str:
+    """이미지 bytes 시그니처로 MIME 추정(업로드 파일용)."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
+def _bytes_image_parts(images: list[bytes] | None) -> list:
+    """업로드된 이미지 bytes(전달 수익화 데이터 캡처 등)를 Gemini Part 로 변환."""
+    parts = []
+    for data in images or []:
+        if data:
+            parts.append(types.Part.from_bytes(data=data, mime_type=_guess_img_mime(data)))
+    return parts
+
+
 def generate_certification_post(
     member_name: str,
     period: str,
@@ -53,6 +73,8 @@ def generate_certification_post(
     kakao_content: str,
     notion_context: str,
     notion_images: list[str] | None = None,
+    prev_month_text: str = "",
+    prev_month_images: list[bytes] | None = None,
     model: str = DEFAULT_MODEL,
 ) -> Generator[str, None, None]:
     """Gemini로 인증글을 스트리밍 생성. Yields: 텍스트 청크.
@@ -68,10 +90,14 @@ def generate_certification_post(
 
     system_prompt = SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
     user_message = build_user_message(
-        member_name, period, revenue, kakao_content, notion_context
+        member_name, period, revenue, kakao_content, notion_context, prev_month_text
     )
 
-    contents = [types.Part.from_text(text=user_message)] + _fetch_image_parts(notion_images)
+    contents = (
+        [types.Part.from_text(text=user_message)]
+        + _fetch_image_parts(notion_images)
+        + _bytes_image_parts(prev_month_images)
+    )
 
     client = genai.Client(api_key=api_key)
     try:

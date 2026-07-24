@@ -42,8 +42,14 @@ def build_user_message(
     revenue: str,
     kakao_content: str,
     notion_context: str,
+    prev_month: str = "",
 ) -> str:
     notion_section = notion_context.strip() if notion_context.strip() else "(노션 데이터 없음 — 카카오톡 내용만으로 작성)"
+    prev_section = (
+        f"\n\n## 전달(前月) 수익화 데이터 (이번 달과 비교해 성과/정체/하락을 가늠하는 참고)\n{prev_month.strip()}"
+        if prev_month and prev_month.strip()
+        else ""
+    )
     return f"""## 입력 정보
 
 - 회원 이름: {member_name or '(미입력)'}
@@ -54,7 +60,7 @@ def build_user_message(
 {kakao_content}
 
 ## 노션 회원 페이지 기록 (컷오프 적용)
-{notion_section}"""
+{notion_section}{prev_section}"""
 
 
 def check_auth() -> tuple[bool, str]:

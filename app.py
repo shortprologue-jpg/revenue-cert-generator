@@ -468,6 +468,28 @@ with col_input:
         key=kakao_key,  # 회원 바뀌면 새 key → 이전 카톡 내용 초기화
     )
 
+    # 전달(前月) 수익화 데이터 — 이번 달이 성과 달인지 준비·정체 달인지 판단하는 참고.
+    st.markdown("**전달(前月) 수익화 데이터** (선택)")
+    st.caption(
+        "이번 달이 성과 달인지 준비·정체 달인지 판단하는 데 씁니다. "
+        "전달 매출·지표를 텍스트로 적거나, 콘관시 표 캡처를 올리세요."
+    )
+    prev_month_text = st.text_area(
+        "전달 수익화 데이터 직접 입력",
+        height=110,
+        placeholder="예: 전달(5월) 매출 9,200,000원 · 유료 전환율 5.1% · 객단가 61만원",
+        label_visibility="collapsed",
+        key=f"prevm_text_{nonce}",
+    )
+    prev_month_files = st.file_uploader(
+        "전달 데이터 이미지 업로드",
+        type=["png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        help="전달 콘관시 표·매출 캡처(여러 장 가능)",
+        key=f"prevm_img_{nonce}",
+    )
+
     can_generate = bool(notion_key and gemini_ok)
     generate_btn = st.button(
         "인증글 생성",
@@ -566,6 +588,7 @@ if generate_btn:
         with output_placeholder.container():
             stream_area = st.empty()
             full_text = ""
+            prev_imgs = [f.getvalue() for f in (prev_month_files or [])]
 
             try:
                 with st.spinner("인증글 생성 중..."):
@@ -576,6 +599,8 @@ if generate_btn:
                         kakao_content=kakao_text.strip(),
                         notion_context=notion_context,
                         notion_images=notion_images,
+                        prev_month_text=prev_month_text.strip(),
+                        prev_month_images=prev_imgs,
                     ):
                         full_text += chunk
                         stream_area.markdown(full_text + "▌")
