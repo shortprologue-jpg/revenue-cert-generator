@@ -481,19 +481,10 @@ with col_input:
     # 전달(前月) 수익화 데이터 — 이번 달이 성과 달인지 준비·정체 달인지 판단하는 참고.
     # UX: 텍스트(①)와 이미지(②)를 명확히 나누고, 이미지의 업로드·드래그·붙여넣기는
     #     하나의 테두리 카드로 묶어 "첨부 방법이 흩어져 보이는" 문제를 없앤다.
-    st.markdown("**전달(前月) 수익화 데이터** (선택)")
-    st.caption("이번 달이 성과 달인지 준비·정체 달인지 가늠하는 참고예요.")
+    st.markdown("**전달 수익화 데이터** (선택)")
+    st.caption("전달 콘관시 표 캡처를 넣으면 이번 달과 비교해 성과/정체/하락을 판단합니다.")
 
-    # ① 텍스트 요약
-    prev_month_text = st.text_area(
-        "전달 데이터 텍스트",
-        height=90,
-        placeholder="예: 전달(5월) 매출 9,200,000원 · 유료 전환율 5.1% · 객단가 61만원",
-        label_visibility="collapsed",
-        key=f"prevm_text_{nonce}",
-    )
-
-    # ② 이미지 첨부 — 업로드·드래그·붙여넣기를 한 카드에 모아 하나의 영역처럼.
+    # 이미지 첨부 — 업로드·드래그·붙여넣기를 한 카드에 모아 하나의 영역처럼.
     #    붙여넣기 버튼을 전체폭(CSS)으로 늘려 업로드 드롭존과 세로로 이어진 한 유닛으로 보이게.
     prev_paste_imgs: list[bytes] = []
     with st.container(border=True):
@@ -635,7 +626,7 @@ if generate_btn:
                         kakao_content=kakao_text.strip(),
                         notion_context=notion_context,
                         notion_images=notion_images,
-                        prev_month_text=prev_month_text.strip(),
+                        prev_month_text="",
                         prev_month_images=prev_imgs,
                     ):
                         full_text += chunk
