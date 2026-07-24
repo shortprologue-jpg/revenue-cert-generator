@@ -93,11 +93,20 @@ def generate_certification_post(
         member_name, period, revenue, kakao_content, notion_context, prev_month_text
     )
 
-    contents = (
-        [types.Part.from_text(text=user_message)]
-        + _fetch_image_parts(notion_images)
-        + _bytes_image_parts(prev_month_images)
-    )
+    contents = [types.Part.from_text(text=user_message)] + _fetch_image_parts(notion_images)
+    prev_parts = _bytes_image_parts(prev_month_images)
+    if prev_parts:
+        # 전달 이미지에 명확한 구분 라벨을 붙인다 — 없으면 모델이 이번 달 콘관시
+        # 이미지와 섞어, 전달 데이터를 비교하지 못하거나 이번 달 수치로 오인한다.
+        contents.append(types.Part.from_text(
+            text=(
+                "\n\n[중요] 아래 첨부 이미지는 **전달(前月) 수익화 데이터** 캡처입니다. "
+                "위의 노션/이번 달 콘관시 이미지와 반드시 구분하세요. "
+                "이번 달 수치를 전달과 비교해 성과/정체/하락을 판단하는 용도로만 쓰고, "
+                "전달 수치를 이번 달 것으로 오인하지 마세요."
+            )
+        ))
+        contents += prev_parts
 
     client = genai.Client(api_key=api_key)
     try:

@@ -513,11 +513,16 @@ with col_input:
         )
         if _HAS_PASTE:
             _paste = _pbutton("📋 여기에 Ctrl+V 로 붙여넣기", key=f"prevm_paste_{nonce}")
+            _pkey = f"prevm_pasted_{nonce}"
             if _paste is not None and getattr(_paste, "image_data", None) is not None:
                 _buf = BytesIO()
                 _paste.image_data.save(_buf, format="PNG")
-                prev_paste_imgs.append(_buf.getvalue())
-                st.image(_paste.image_data, width=180, caption="붙여넣은 이미지")
+                # 생성 버튼 클릭(다른 rerun)에도 확실히 남도록 세션에 백업.
+                st.session_state[_pkey] = _buf.getvalue()
+            _pasted = st.session_state.get(_pkey)
+            if _pasted:
+                prev_paste_imgs.append(_pasted)
+                st.image(_pasted, width=180, caption="붙여넣은 이미지 ✓")
         else:
             st.caption("💡 배포 앱에서는 캡처 후 Ctrl+V 붙여넣기도 됩니다.")
 
