@@ -493,20 +493,26 @@ with col_input:
         key=f"prevm_text_{nonce}",
     )
 
-    # ② 이미지 첨부 — 업로드·드래그·붙여넣기를 한 카드에 모아 하나의 영역으로 인식되게.
+    # ② 이미지 첨부 — 업로드·드래그·붙여넣기를 한 카드에 모아 하나의 영역처럼.
+    #    붙여넣기 버튼을 전체폭(CSS)으로 늘려 업로드 드롭존과 세로로 이어진 한 유닛으로 보이게.
     prev_paste_imgs: list[bytes] = []
     with st.container(border=True):
-        st.caption("🖼️ 이미지로 첨부 (콘관시 표 캡처 등) — 클릭·드래그·붙여넣기 모두 가능")
+        st.markdown(
+            "<style>[class*='st-key-prevm_paste_'] button{width:100% !important;}</style>"
+            "🖼️ <b>이미지 첨부</b> — 아래에 <b>드래그</b>하거나 <b>클릭(Upload)</b>, "
+            "또는 캡처 후 <b>Ctrl+V</b> 로 붙여넣기",
+            unsafe_allow_html=True,
+        )
         prev_month_files = st.file_uploader(
             "이미지 업로드",
             type=["png", "jpg", "jpeg", "webp"],
             accept_multiple_files=True,
             label_visibility="collapsed",
-            help="업로드 버튼으로 선택하거나, 이 영역에 드래그앤드롭",
+            help="여러 장 첨부 가능",
             key=f"prevm_img_{nonce}",
         )
         if _HAS_PASTE:
-            _paste = _pbutton("📋 캡처 붙여넣기 (Ctrl+V)", key=f"prevm_paste_{nonce}")
+            _paste = _pbutton("📋 여기에 Ctrl+V 로 붙여넣기", key=f"prevm_paste_{nonce}")
             if _paste is not None and getattr(_paste, "image_data", None) is not None:
                 _buf = BytesIO()
                 _paste.image_data.save(_buf, format="PNG")
