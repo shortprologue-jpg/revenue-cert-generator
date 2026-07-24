@@ -37,6 +37,16 @@ from src.notion_fetcher import (
     list_active_members,
 )
 
+from io import BytesIO
+
+# 클립보드 붙여넣기(Ctrl+V) 버튼 — 배포엔 requirements 로 설치됨.
+# 로컬 미설치 시엔 붙여넣기만 비활성(업로드 버튼·드래그앤드롭은 정상 동작).
+try:
+    from streamlit_paste_button import paste_image_button as _pbutton
+    _HAS_PASTE = True
+except Exception:  # noqa: BLE001
+    _HAS_PASTE = False
+
 st.set_page_config(
     page_title="BPT 수익화 인증글 생성기",
     page_icon="🏋️",
@@ -486,9 +496,21 @@ with col_input:
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
         label_visibility="collapsed",
-        help="전달 콘관시 표·매출 캡처(여러 장 가능)",
+        help="업로드 버튼으로 선택하거나, 이미지를 이 영역에 드래그앤드롭",
         key=f"prevm_img_{nonce}",
     )
+
+    # 클립보드 붙여넣기(Ctrl+V) — 캡처 후 버튼 누르고 붙여넣으면 바로 첨부.
+    prev_paste_imgs: list[bytes] = []
+    if _HAS_PASTE:
+        _paste = _pbutton("📋 캡처 이미지 붙여넣기 (Ctrl+V)", key=f"prevm_paste_{nonce}")
+        if _paste is not None and getattr(_paste, "image_data", None) is not None:
+            _buf = BytesIO()
+            _paste.image_data.save(_buf, format="PNG")
+            prev_paste_imgs.append(_buf.getvalue())
+            st.image(_paste.image_data, width=180, caption="붙여넣은 이미지")
+    else:
+        st.caption("💡 배포 앱에서는 캡처 후 Ctrl+V 붙여넣기도 됩니다.")
 
     can_generate = bool(notion_key and gemini_ok)
     generate_btn = st.button(
@@ -588,7 +610,7 @@ if generate_btn:
         with output_placeholder.container():
             stream_area = st.empty()
             full_text = ""
-            prev_imgs = [f.getvalue() for f in (prev_month_files or [])]
+            prev_imgs = [f.getvalue() for f in (prev_month_files or [])] + prev_paste_imgs
 
             try:
                 with st.spinner("인증글 생성 중..."):
